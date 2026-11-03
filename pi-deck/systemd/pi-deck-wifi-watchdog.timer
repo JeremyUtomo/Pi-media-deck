@@ -1,0 +1,10 @@
+[Unit]
+Description=Pi Media Deck: check Wi-Fi every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

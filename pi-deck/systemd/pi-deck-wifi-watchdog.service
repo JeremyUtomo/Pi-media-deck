@@ -1,0 +1,7 @@
+[Unit]
+Description=Pi Media Deck: reconnect Wi-Fi if the router stops answering
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /usr/local/lib/pi-deck/wifi-watchdog.sh

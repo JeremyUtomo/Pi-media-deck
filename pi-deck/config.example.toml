@@ -1,0 +1,30 @@
+# Copy to ~/.config/pi-deck/config.toml on the Pi.
+
+# Tried in order on every (re)connect. "usb" = the PC on the USB link (scripts/install-usb.sh); it's skipped
+# instantly while the cable/link is down. While on a later endpoint, the deck switches back once an earlier
+# one is reachable.
+endpoints = [
+    "ws://usb:8765",
+    "ws://192.168.1.20:8765",  # the PC's LAN IP (wired); add its Wi-Fi IP as another fallback if it has one
+]
+
+fullscreen = true
+fps = 30
+
+# After this many seconds without touch, show the album cover full screen (0 = never).
+# A touch returns to the normal view and is otherwise ignored.
+ambient_after_s = 120
+# How bright the ambient view is, 0.05-1.0 (the backlight itself can't dim, so the image is darkened).
+ambient_brightness = 0.6
+# Idle and the PC unreachable this long (it's off): black screen, backlight off (0 = never). Touch wakes it.
+dark_after_s = 30
+
+# Wake-on-LAN: the PC's *wired* Ethernet MAC (Wi-Fi can't wake a PC from shutdown). Adds "Turn on PC" to the
+# screen shown while the PC is off. Send to the LAN's broadcast address.
+# wake_mac = "AA-BB-CC-DD-EE-FF"
+# wake_broadcast = "192.168.1.255"
+
+# Lights: an IKEA DIRIGERA room, paired once with `python3 ~/pi-deck/scripts/dirigera_pair.py <hub-ip>`.
+# Adds a Lights tab and a quick on/off button in the tab bar. Leave out to hide both.
+# lights_room = "Bedroom"
+# lights_title = "Ceiling lights"

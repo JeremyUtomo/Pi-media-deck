@@ -1,0 +1,13 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+
+# This install's private details (LAN addresses, hostnames, MAC) — the repo is public
+CLAUDE.local.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/

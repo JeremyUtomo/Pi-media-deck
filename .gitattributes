@@ -1,0 +1,5 @@
+# LF everywhere: the Pi side runs these files directly (bash, systemd, Python), and CRLF breaks them.
+* text=auto eol=lf
+*.ttf binary
+*.png binary
+*.ico binary
