@@ -14,6 +14,7 @@ class Config:
     fullscreen: bool = True
     fps: int = 30
     ambient_after_s: float = 120  # show the dimmed album cover after this long without touch; 0 = never
+    ambient_after_quiet_s: float = 5  # the same, but while the PC is gone and no light is on; 0 = no shortcut
     ambient_brightness: float = 0.6  # 0.05-1.0; the backlight has no dimming, so the image is darkened
     dark_after_s: float = 30  # idle and the PC gone this long: screen and backlight off; 0 = never
     wake_mac: str | None = None  # the PC's wired Ethernet MAC: shows "Turn on PC" (Wake-on-LAN) while it's off
@@ -29,6 +30,7 @@ def load(path: Path = CONFIG_PATH) -> Config:
         fullscreen=bool(data.get("fullscreen", True)),
         fps=int(data.get("fps", 30)),
         ambient_after_s=float(data.get("ambient_after_s", 120)),
+        ambient_after_quiet_s=float(data.get("ambient_after_quiet_s", 5)),
         ambient_brightness=float(data.get("ambient_brightness", 0.6)),
         dark_after_s=float(data.get("dark_after_s", 30)),
         wake_mac=data.get("wake_mac"),

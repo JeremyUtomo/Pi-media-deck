@@ -25,12 +25,16 @@ class IdleTimer:
             return True
         return False
 
-    def update(self) -> bool:
-        """Call regularly. Returns True if idle mode just started (needs a redraw)."""
-        if self.idle or self._idle_after_s <= 0:
+    def update(self, idle_after_s: float | None = None) -> bool:
+        """Call regularly. Returns True if idle mode just started (needs a redraw).
+
+        `idle_after_s` overrides the configured wait for this check (e.g. a shorter one while nothing is on).
+        """
+        wait = self._idle_after_s if idle_after_s is None else idle_after_s
+        if self.idle or wait <= 0:
             return False
-        if self._clock() - self._last_activity >= self._idle_after_s:
-            log.info("ambient view after %.0f s without touch", self._idle_after_s)
+        if self._clock() - self._last_activity >= wait:
+            log.info("ambient view after %.0f s without touch", wait)
             self.idle = True
             return True
         return False

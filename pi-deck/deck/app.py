@@ -18,7 +18,7 @@ from deck.state import Store
 from deck.ui import theme
 from deck.lights import LightsClient
 from deck.ui.ambient import AmbientView
-from deck.ui.lights import QUICK_KEY, LightsApi, LightsTab, draw_quick_toggle, toggle_all
+from deck.ui.lights import QUICK_KEY, LightsApi, LightsTab, draw_quick_toggle, reachable, toggle_all
 from deck.ui.outputs import OutputSelector
 from deck.ui.power import PowerControl
 from deck.ui.spotify import SpotifyTab
@@ -77,7 +77,9 @@ class App:
         backlight: Backlight | None = None,
         dark_after_s: float = 0,
         wol: WakeOnLan | None = None,
+        idle_quiet_s: float = 0,
     ) -> None:
+        self._idle_quiet_s = idle_quiet_s
         self._wol = wol
         self._waking_until: float | None = None  # "Turn on PC" was tapped; the PC should be booting
         self._screen = screen
@@ -157,7 +159,7 @@ class App:
             self._offline_since = None
         elif self._offline_since is None:
             self._offline_since = time.monotonic()
-        if self._idle is not None and self._gesture is None and self._idle.update():
+        if self._idle is not None and self._gesture is None and self._idle.update(self._idle_wait()):
             self._outputs.open = self._power.open = False
             self._start_fade(FADE_TO_AMBIENT_S)
         if self.dark != self._dark_shown:
@@ -169,6 +171,17 @@ class App:
         if (self._outputs.open or self._power.open) and not self._store.connected:
             self._outputs.open = self._power.open = False
             self.dirty = True
+
+    def _idle_wait(self) -> float | None:
+        """A short idle timeout while there's nothing to control: the PC is gone and no light is on.
+
+        None = the configured timeout. Not while "Starting the PC…" is showing, so that stays readable.
+        """
+        if self._idle_quiet_s <= 0 or self._store.connected or self._waking_until is not None:
+            return None
+        if any(lamp["on"] for lamp in reachable(self._store)):
+            return None
+        return self._idle_quiet_s
 
     def pointer_down(self, pos: tuple[float, float]) -> None:
         if self._idle is not None and self._idle.activity():
@@ -387,7 +400,8 @@ def run(
     app = App(screen, store, net, Fonts(), idle, config.ambient_brightness,
               lights=lights, lights_title=config.lights_title or config.lights_room or "Lights",
               backlight=backlight, dark_after_s=config.dark_after_s,
-              wol=WakeOnLan(config.wake_mac, config.wake_broadcast) if config.wake_mac else None)
+              wol=WakeOnLan(config.wake_mac, config.wake_broadcast) if config.wake_mac else None,
+              idle_quiet_s=config.ambient_after_quiet_s)
     if start_tab is not None:
         app.select_tab(start_tab)
     net.start()

@@ -14,6 +14,8 @@ fps = 30
 # After this many seconds without touch, show the album cover full screen (0 = never).
 # A touch returns to the normal view and is otherwise ignored.
 ambient_after_s = 120
+# The same, but while the PC is gone and no light is on (nothing to control): 0 = always use ambient_after_s.
+ambient_after_quiet_s = 5
 # How bright the ambient view is, 0.05-1.0 (the backlight itself can't dim, so the image is darkened).
 ambient_brightness = 0.6
 # Idle and the PC unreachable this long (it's off): black screen, backlight off (0 = never). Touch wakes it.
