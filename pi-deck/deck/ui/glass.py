@@ -133,8 +133,36 @@ class Backplate:
                 image.set_clip(None if clip is None else pygame.Rect(clip).move(-area.left, -area.top))
                 draw(image, pygame.Rect(rect).move(-area.left, -area.top), radius, style, color)
             image.set_clip(None)
+            dither(image, area.topleft)
             self._key, self._image = key, image
         surface.blit(self._image, area.topleft)
+
+
+# 4x4 ordered (Bayer) dither, 0–3 per channel. The HyperPixel's DPI link is 18-bit (6 bits per colour), so the
+# panel shows only every 4th shade. The glass gradients span ~5 shades, which became visible bands. Adding
+# 0–3 in this pattern before the panel drops the low 2 bits keeps the in-between shades (as a fine,
+# invisible-at-233-ppi texture).
+_BAYER = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))
+_dither_pattern: pygame.Surface | None = None
+
+
+def dither(surface: pygame.Surface, origin: tuple[int, int] = (0, 0)) -> None:
+    """Adds the dither pattern to an opaque surface, aligned to screen coordinates (`origin` = its top-left
+    on screen), so neighbouring areas tile seamlessly."""
+    global _dither_pattern
+    width, height = surface.get_size()
+    if _dither_pattern is None or _dither_pattern.get_width() < width + 4 or _dither_pattern.get_height() < height + 4:
+        tile = pygame.Surface((4, 4))
+        for y, row in enumerate(_BAYER):
+            for x, value in enumerate(row):
+                tile.set_at((x, y), (value // 4,) * 3)
+        pattern = pygame.Surface((max(width, 800) + 4, max(height, 480) + 4))
+        for y in range(0, pattern.get_height(), 4):
+            for x in range(0, pattern.get_width(), 4):
+                pattern.blit(tile, (x, y))
+        _dither_pattern = pattern
+    offset = pygame.Rect(origin[0] % 4, origin[1] % 4, width, height)
+    surface.blit(_dither_pattern, (0, 0), offset, special_flags=pygame.BLEND_ADD)
 
 
 def circle(surface: pygame.Surface, center: tuple[float, float], radius: int, style: GlassStyle,
@@ -217,19 +245,22 @@ def _mask(size: tuple[int, int], radius: int, _style=None) -> pygame.Surface:
 
 
 def _vertical(size: tuple[int, int], top: tuple[int, int, int, int], bottom: tuple[int, int, int, int],
-              stop: float = 1.0) -> pygame.Surface:
-    """A top→bottom gradient that reaches `bottom` at `stop` (0–1 of the height) and stays there."""
+              ease: bool = False) -> pygame.Surface:
+    """A top→bottom gradient. With `ease`, it changes fastest at the top and flattens out smoothly towards the
+    bottom ((1 - t)²): a highlight that fades without a visible edge. (It used to stop dead at 55 % of the
+    height, which left a line across every panel.)"""
     width, height = size
     column = pygame.Surface((1, height), pygame.SRCALPHA)
     for y in range(height):
-        t = min(1.0, y / max(1, (height - 1) * stop))
-        column.set_at((0, y), tuple(round(a + (b - a) * t) for a, b in zip(top, bottom)))
+        t = y / max(1, height - 1)
+        weight = (1 - t) ** 2 if ease else 1 - t
+        column.set_at((0, y), tuple(round(b + (a - b) * weight) for a, b in zip(top, bottom)))
     return pygame.transform.scale(column, (width, height))
 
 
 def _body(size: tuple[int, int], radius: int, style: GlassStyle) -> pygame.Surface:
     r, g, b, a = style.fill
-    tint = _vertical(size, (r, g, b, min(255, a + style.highlight)), (r, g, b, a), stop=0.55)
+    tint = _vertical(size, (r, g, b, min(255, a + style.highlight)), (r, g, b, a), ease=True)
     tint.blit(_layer("mask", size, radius), (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
     return tint
 
