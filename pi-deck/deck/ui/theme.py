@@ -10,6 +10,8 @@ import pygame
 
 WIDTH, HEIGHT = 800, 480
 TAB_BAR_HEIGHT = 64
+# The tab bar is a floating glass capsule inside that strip (deck/ui/glass.py).
+BAR_MARGIN, BAR_TOP, BAR_HEIGHT = 8, 6, 52
 TOUCH_SLOP = 14  # hit areas extend this far past what's drawn
 
 # Warm and creamy: latte-cream base, cocoa-brown text, one terracotta accent.

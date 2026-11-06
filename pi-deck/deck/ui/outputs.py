@@ -6,7 +6,7 @@ import pygame
 
 from deck.net import NetClient
 from deck.state import Store
-from deck.ui import theme
+from deck.ui import glass, theme
 from deck.ui.theme import Fonts
 from deck.ui.widgets import Hit, filled_circle, filled_polygon, speaker_icon
 
@@ -58,7 +58,7 @@ class OutputSelector:
             label = f.render("PC" if connected else "Connecting…", 16, theme.TEXT_DIM)
             pill = pygame.Rect(0, 0, label.get_width() + 46, PILL_HEIGHT - 4)
             pill.midright = (right, center_y)
-            pygame.draw.rect(surface, theme.SURFACE, pill, border_radius=pill.height // 2)
+            glass.draw(surface, pill, pill.height // 2, glass.CHIP)
             filled_circle(surface, (pill.left + 18, center_y), 6, theme.CONNECTED if connected else theme.WARNING)
             surface.blit(label, label.get_rect(midleft=(pill.left + 32, center_y)))
             self.pill_left = pill.left
@@ -67,8 +67,8 @@ class OutputSelector:
         label = f.render(split_name(name)[0], 16, theme.TEXT, max_width=PILL_NAME_MAX)
         pill = pygame.Rect(0, 0, label.get_width() + 58, PILL_HEIGHT)
         pill.midright = (right, center_y)
-        color = theme.PRESSED if pressed == MENU_KEY else theme.SURFACE_HIGH if self.open else theme.SURFACE
-        pygame.draw.rect(surface, color, pill, border_radius=PILL_HEIGHT // 2)
+        style = glass.LENS_PRESSED if pressed == MENU_KEY else glass.LENS if self.open else glass.CHIP
+        glass.draw(surface, pill, PILL_HEIGHT // 2, style)
         speaker_icon(surface, (pill.left + 18, center_y), 16, theme.ACCENT)
         surface.blit(label, label.get_rect(midleft=(pill.left + 32, center_y)))
         _chevron(surface, (pill.right - 14, center_y), theme.TEXT_DIM, up=self.open)
@@ -90,8 +90,7 @@ class OutputSelector:
         rows = outputs[:max_rows]
         panel = pygame.Rect(0, 0, MENU_WIDTH, 2 * MENU_PADDING + ROW_HEIGHT * max(len(rows), 1))
         panel.topright = (theme.WIDTH - 16, theme.TAB_BAR_HEIGHT + 2)
-        pygame.draw.rect(surface, theme.PRESSED, panel.inflate(2, 2), border_radius=theme.RADIUS_CARD + 1)
-        pygame.draw.rect(surface, theme.SURFACE, panel, border_radius=theme.RADIUS_CARD)
+        glass.draw(surface, panel, theme.RADIUS_CARD, glass.POPUP)  # frosted: blurs the page behind it
 
         hits = [Hit(CLOSE_KEY, surface.get_rect())]
         self._menu_ids = [o["id"] for o in rows]
@@ -101,7 +100,7 @@ class OutputSelector:
             key = f"output:{index}"
             selected = output["id"] == current
             if pressed == key or selected:
-                pygame.draw.rect(surface, theme.PRESSED if pressed == key else theme.SURFACE_HIGH, row, border_radius=14)
+                glass.draw(surface, row, 14, glass.LENS_PRESSED if pressed == key else glass.LENS)
             if selected:
                 _check(surface, (row.left + 24, row.centery), theme.ACCENT)
             endpoint, device = split_name(output["name"])

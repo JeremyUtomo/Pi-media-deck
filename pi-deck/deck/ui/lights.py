@@ -9,7 +9,7 @@ from typing import Protocol
 import pygame
 
 from deck.state import Store
-from deck.ui import theme
+from deck.ui import glass, theme
 from deck.ui.tab import Tab
 from deck.ui.theme import Fonts
 from deck.ui.widgets import Hit, bulb_icon, centered_text, circle_hit, filled_circle, knob, rounded
@@ -53,10 +53,9 @@ def draw_quick_toggle(surface: pygame.Surface, store: Store, center: tuple[int, 
         return []
     on = any(lamp["on"] for lamp in lamps)
     if on:
-        fill = theme.ACCENT_PRESSED if pressed == QUICK_KEY else theme.ACCENT
+        filled_circle(surface, center, 18, theme.ACCENT_PRESSED if pressed == QUICK_KEY else theme.ACCENT)
     else:
-        fill = theme.PRESSED if pressed == QUICK_KEY else theme.SURFACE
-    filled_circle(surface, center, 18, fill)
+        glass.circle(surface, center, 18, glass.LENS_PRESSED if pressed == QUICK_KEY else glass.CHIP)
     bulb_icon(surface, center, 22, theme.BACKGROUND if on else theme.TEXT_DIM)
     return [circle_hit(QUICK_KEY, center, 18)]
 
@@ -73,6 +72,7 @@ class LightsTab(Tab):
         self._level_track = pygame.Rect(0, 0, 1, 1)
         self._temperature_track = pygame.Rect(0, 0, 1, 1)
         self._gradient: pygame.Surface | None = None
+        self._backplate = glass.Backplate()
         # Dragged values shown instead of the hub's until its events catch up: name -> (value, show until).
         self._overrides: dict[str, tuple[float, float]] = {}
         self._pending: dict[str, int] = {}
@@ -185,8 +185,7 @@ class LightsTab(Tab):
         group = self._group()
         left = pygame.Rect(area.left + 16, area.top + 8, 300, area.height - 16)
         right = pygame.Rect(left.right + 12, left.top, area.right - 16 - left.right - 12, left.height)
-        pygame.draw.rect(surface, theme.SURFACE, left, border_radius=theme.RADIUS_CARD)
-        pygame.draw.rect(surface, theme.SURFACE, right, border_radius=theme.RADIUS_CARD)
+        self._backplate.draw(surface, area, theme.BACKGROUND, self._panels(left, right, group, pressed))
         hits = self._draw_power(surface, left, group, pressed)
         hits += self._draw_controls(surface, right, group, pressed)
         return hits
@@ -199,13 +198,7 @@ class LightsTab(Tab):
         status = f"On · {group['level']}%" if on_count else "Off"  # the lamps are controlled as one
         surface.blit(f.render(status, 16, theme.TEXT_DIM), (card.left + 24, card.top + 56))
 
-        center = (card.centerx, card.top + 228)
-        if group["on"]:
-            filled_circle(surface, center, 92, theme.SURFACE_HIGH)
-            fill = theme.ACCENT_PRESSED if pressed == "light:power" else theme.ACCENT
-        else:
-            fill = theme.PRESSED if pressed == "light:power" else theme.SURFACE_HIGH
-        filled_circle(surface, center, 76, fill)
+        center = self._power_center(card)
         bulb_icon(surface, center, 72, theme.BACKGROUND if group["on"] else theme.TEXT_FAINT)
         hint = f.render("Tap to turn off" if group["on"] else "Tap to turn on", 15, theme.TEXT_FAINT)
         surface.blit(hint, hint.get_rect(midbottom=(card.centerx, card.bottom - 20)))
@@ -226,11 +219,8 @@ class LightsTab(Tab):
         knob(surface, (x0 + round(width * group["level"] / 100), self._level_track.centery),
              16 if pressed == "light:level" else 14, theme.ACCENT if group["on"] else theme.TEXT_FAINT)
         hits.append(Hit("light:level", self._level_track.inflate(24, 32), draggable=True, horizontal=True))
-        hits += self._preset_row(
-            surface, x0, width, card.top + 110, pressed,
-            [(f"light:level:{level}", f"{level}%", None, group["on"] and abs(group["level"] - level) <= 2)
-             for level in LEVEL_PRESETS],
-        )
+        rows = self._preset_rows(card, group)
+        hits += self._preset_row(surface, x0, width, *rows[0])
 
         # Warmth (only if the lamps support colour temperature): slider + Warm/Soft/Neutral/Cool presets
         if group["warmest"] is not None and group["temperature"] is not None:
@@ -242,27 +232,61 @@ class LightsTab(Tab):
             position = x0 + round(width * min(max((kelvin - group["warmest"]) / span, 0.0), 1.0))
             knob(surface, (position, self._temperature_track.centery), 16 if pressed == "light:temperature" else 14, kelvin_rgb(kelvin))
             hits.append(Hit("light:temperature", self._temperature_track.inflate(24, 32), draggable=True, horizontal=True))
-            presets = [(name, self._clamp_kelvin(preset, group)) for name, preset in PRESETS]
-            hits += self._preset_row(
-                surface, x0, width, card.top + 274, pressed,
-                [(f"light:preset:{preset}", name, kelvin_rgb(preset), group["on"] and abs(kelvin - preset) < 150)
-                 for name, preset in presets],
-            )
+            hits += self._preset_row(surface, x0, width, *rows[1])
         return hits
 
+    @staticmethod
+    def _power_center(card: pygame.Rect) -> tuple[int, int]:
+        return (card.centerx, card.top + 228)
+
+    def _preset_rows(self, card: pygame.Rect, group: dict) -> list[tuple[int, list[tuple[str, str, tuple[int, int, int] | None, bool]]]]:
+        """(top, presets) per row of preset pills: brightness, then warmth if the lamps support it."""
+        rows = [(card.top + 110,
+                 [(f"light:level:{level}", f"{level}%", None, group["on"] and abs(group["level"] - level) <= 2)
+                  for level in LEVEL_PRESETS])]
+        if group["warmest"] is not None and group["temperature"] is not None:
+            kelvin = group["temperature"]
+            presets = [(name, self._clamp_kelvin(preset, group)) for name, preset in PRESETS]
+            rows.append((card.top + 274,
+                         [(f"light:preset:{preset}", name, kelvin_rgb(preset), group["on"] and abs(kelvin - preset) < 150)
+                          for name, preset in presets]))
+        return rows
+
+    @staticmethod
+    def _pill_rects(x0: int, width: int, top: int, count: int) -> list[pygame.Rect]:
+        gap = 8
+        pill_width = (width - gap * (count - 1)) // count
+        return [pygame.Rect(x0 + index * (pill_width + gap), top, pill_width, PILL_HEIGHT) for index in range(count)]
+
+    def _panels(self, left: pygame.Rect, right: pygame.Rect, group: dict, pressed: str | None) -> list[glass.Panel]:
+        """All of the tab's glass: both cards, the power button with its halo, the preset pills."""
+        panels = [glass.panel(left, theme.RADIUS_CARD, glass.CARD), glass.panel(right, theme.RADIUS_CARD, glass.CARD)]
+        # A glass halo around the button; the button is terracotta tinted glass when on, a clear lens when off.
+        center = self._power_center(left)
+        panels.append(glass.circle_panel(center, 92, glass.CHIP))
+        if group["on"]:
+            style = glass.TINTED_PRESSED if pressed == "light:power" else glass.TINTED
+            panels.append(glass.circle_panel(center, 76, style, theme.ACCENT))
+        else:
+            panels.append(glass.circle_panel(center, 76, glass.LENS_PRESSED if pressed == "light:power" else glass.LENS))
+        x0, width = right.left + 24, right.width - 48
+        for top, presets in self._preset_rows(right, group):
+            for pill, (key, _, _, selected) in zip(self._pill_rects(x0, width, top, len(presets)), presets):
+                if selected:
+                    style = glass.TINTED_PRESSED if pressed == key else glass.TINTED
+                    panels.append(glass.panel(pill, PILL_HEIGHT // 2, style, theme.ACCENT))
+                else:
+                    panels.append(glass.panel(pill, PILL_HEIGHT // 2, glass.LENS_PRESSED if pressed == key else glass.LENS))
+        return panels
+
     def _preset_row(
-        self, surface: pygame.Surface, x0: int, width: int, top: int, pressed: str | None,
+        self, surface: pygame.Surface, x0: int, width: int, top: int,
         presets: list[tuple[str, str, tuple[int, int, int] | None, bool]],
     ) -> list[Hit]:
-        """A row of pill buttons: (key, label, optional color dot, selected)."""
+        """A row of pill labels (key, label, optional color dot, selected); their glass is in the backplate."""
         f = self._fonts
-        gap = 8
-        pill_width = (width - gap * (len(presets) - 1)) // len(presets)
         hits = []
-        for index, (key, text, dot, selected) in enumerate(presets):
-            pill = pygame.Rect(x0 + index * (pill_width + gap), top, pill_width, PILL_HEIGHT)
-            color = theme.PRESSED if pressed == key else theme.ACCENT if selected else theme.SURFACE_HIGH
-            pygame.draw.rect(surface, color, pill, border_radius=PILL_HEIGHT // 2)
+        for pill, (key, text, dot, selected) in zip(self._pill_rects(x0, width, top, len(presets)), presets):
             label = f.render(text, 16, theme.BACKGROUND if selected else theme.TEXT, bold=selected)
             if dot is None:
                 surface.blit(label, label.get_rect(center=pill.center))
@@ -279,7 +303,7 @@ class LightsTab(Tab):
         surface.blit(rendered, (x0 + width - rendered.get_width(), y + 2))
 
     def _gradient_surface(self, group: dict) -> pygame.Surface:
-        """Warm-to-cool track, rendered once (composited onto the card color, rounded)."""
+        """Warm-to-cool track, rendered once (rounded, with alpha corners: the glass card behind it is translucent)."""
         size = self._temperature_track.size
         if self._gradient is None or self._gradient.get_size() != size:
             strip = pygame.Surface((64, 1))
@@ -287,5 +311,5 @@ class LightsTab(Tab):
                 kelvin = group["warmest"] + (group["coolest"] - group["warmest"]) * x / 63
                 strip.set_at((x, 0), kelvin_rgb(kelvin))
             gradient = pygame.transform.smoothscale(strip, size)
-            self._gradient = rounded(gradient, TRACK_HEIGHT // 2, theme.SURFACE)
+            self._gradient = rounded(gradient, TRACK_HEIGHT // 2)
         return self._gradient

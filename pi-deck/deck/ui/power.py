@@ -6,9 +6,9 @@ import pygame
 
 from deck.net import NetClient
 from deck.state import Store
-from deck.ui import theme
+from deck.ui import glass, theme
 from deck.ui.theme import Fonts
-from deck.ui.widgets import Hit, centered_text, circle_hit, filled_circle, power_icon
+from deck.ui.widgets import Hit, centered_text, circle_hit, power_icon
 
 BUTTON_KEY = "power:button"
 CONFIRM_KEY = "power:confirm"
@@ -40,7 +40,7 @@ class PowerControl:
         """Small neutral round button; only while the PC is connected (there's nothing to shut down otherwise)."""
         if not self._store.connected:
             return []
-        filled_circle(surface, center, 18, theme.PRESSED if pressed == BUTTON_KEY or self.open else theme.SURFACE)
+        glass.circle(surface, center, 18, glass.LENS_PRESSED if pressed == BUTTON_KEY or self.open else glass.CHIP)
         power_icon(surface, center, 18, theme.TEXT_DIM)
         return [circle_hit(BUTTON_KEY, center, 18)]
 
@@ -55,10 +55,9 @@ class PowerControl:
 
         card = pygame.Rect((0, 0), DIALOG_SIZE)
         card.center = surface.get_rect().center
-        pygame.draw.rect(surface, theme.PRESSED, card.inflate(2, 2), border_radius=theme.RADIUS_CARD + 1)
-        pygame.draw.rect(surface, theme.BACKGROUND, card, border_radius=theme.RADIUS_CARD)
+        glass.draw(surface, card, theme.RADIUS_CARD, glass.POPUP)  # frosted: blurs the page behind it
 
-        filled_circle(surface, (card.centerx, card.top + 42), 22, theme.MUTED)
+        glass.circle(surface, (card.centerx, card.top + 42), 22, glass.TINTED, theme.MUTED)
         power_icon(surface, (card.centerx, card.top + 42), 22, theme.BACKGROUND)
         centered_text(surface, f.render("Shut down the PC?", 24, theme.TEXT, bold=True), (card.centerx, card.top + 92))
         centered_text(surface, f.render("Apps that are still open may lose unsaved work.", 15, theme.TEXT_DIM),
@@ -68,8 +67,8 @@ class PowerControl:
         width = (card.width - 48 - gap) // 2
         cancel = pygame.Rect(card.left + 24, card.bottom - 24 - 52, width, 52)
         confirm = pygame.Rect(cancel.right + gap, cancel.top, width, 52)
-        pygame.draw.rect(surface, theme.PRESSED if pressed == CANCEL_KEY else theme.SURFACE_HIGH, cancel, border_radius=26)
-        pygame.draw.rect(surface, theme.ACCENT_PRESSED if pressed == CONFIRM_KEY else theme.MUTED, confirm, border_radius=26)
+        glass.draw(surface, cancel, 26, glass.LENS_PRESSED if pressed == CANCEL_KEY else glass.LENS)
+        glass.draw(surface, confirm, 26, glass.TINTED_PRESSED if pressed == CONFIRM_KEY else glass.TINTED, theme.MUTED)
         centered_text(surface, f.render("Cancel", 18, theme.TEXT, bold=True), cancel.center)
         centered_text(surface, f.render("Shut down", 18, theme.BACKGROUND, bold=True), confirm.center)
 

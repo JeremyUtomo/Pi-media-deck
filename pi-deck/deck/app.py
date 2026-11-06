@@ -15,7 +15,7 @@ from deck.config import Config
 from deck.idle import IdleTimer
 from deck.net import NetClient
 from deck.state import Store
-from deck.ui import theme
+from deck.ui import glass, theme
 from deck.lights import LightsClient
 from deck.ui.ambient import AmbientView
 from deck.ui.lights import QUICK_KEY, LightsApi, LightsTab, draw_quick_toggle, reachable, toggle_all
@@ -102,6 +102,8 @@ class App:
         self._gesture: _Gesture | None = None
         self._waking_touch = False  # the touch that left the ambient view; ignored until released
         self._fade: _Fade | None = None
+        self._bar_backplate = glass.Backplate()
+        self._warmed: set[int] = set()  # tabs drawn once off-screen, so their glass is cached before the first visit
         self.pressed: str | None = None
         self.dirty = True
 
@@ -152,6 +154,8 @@ class App:
     def tick(self) -> None:
         if self._tab.tick():
             self.dirty = True
+        if self._gesture is None and self._fade is None and not self.ambient:
+            self._warm_next_tab()
         if self._waking_until is not None and (self._store.connected or time.monotonic() >= self._waking_until):
             self._waking_until = None
             self.dirty = True
@@ -171,6 +175,22 @@ class App:
         if (self._outputs.open or self._power.open) and not self._store.connected:
             self._outputs.open = self._power.open = False
             self.dirty = True
+
+    def _warm_next_tab(self) -> None:
+        """Draws one not-yet-visited tab off-screen once its data is there (building its glass takes up to
+        ~0.6 s on the Pi Zero; better now than on the first tap)."""
+        self._warmed.add(self._active)
+        for index, tab in enumerate(self._tabs):
+            if index in self._warmed or (tab.needs_pc and not self._store.connected):
+                continue
+            if isinstance(tab, LightsTab) and not self._store.lamps:
+                continue
+            scratch = pygame.Surface(self._screen.get_size()).convert()
+            scratch.fill(theme.BACKGROUND)
+            content = pygame.Rect(0, theme.TAB_BAR_HEIGHT, theme.WIDTH, theme.HEIGHT - theme.TAB_BAR_HEIGHT)
+            tab.draw(scratch, content, None)
+            self._warmed.add(index)
+            return  # one per tick, so the loop never stalls for long
 
     def _idle_wait(self) -> float | None:
         """A short idle timeout while there's nothing to control: the PC is gone and no light is on.
@@ -309,24 +329,35 @@ class App:
 
     def _draw_tab_bar(self) -> list[Hit]:
         screen, f = self._screen, self._fonts
-        center_y = theme.TAB_BAR_HEIGHT // 2 + 2
+        # One floating glass capsule; the selected tab is a brighter glass lens inside it.
+        bar = pygame.Rect(theme.BAR_MARGIN, theme.BAR_TOP, theme.WIDTH - 2 * theme.BAR_MARGIN, theme.BAR_HEIGHT)
+        center_y = bar.centery
+        tab_width, pill_height, left = (164 if len(self._tabs) <= 2 else 136), bar.height - 10, bar.left + 5
+        pills = []
+        for index in range(len(self._tabs)):
+            pill = pygame.Rect(left + index * (tab_width + 4), 0, tab_width, pill_height)
+            pill.centery = center_y
+            pills.append(pill)
+
+        # The capsule and the tab lenses as one cached image (the strip behind them is always the plain page).
+        panels = [glass.panel(bar, bar.height // 2, glass.BAR)]
+        for index, pill in enumerate(pills):
+            if self.pressed == f"tab:{index}":
+                panels.append(glass.panel(pill, pill_height // 2, glass.LENS_PRESSED))
+            elif index == self._active:
+                panels.append(glass.panel(pill, pill_height // 2, glass.LENS))
+        self._bar_backplate.draw(screen, pygame.Rect(0, 0, theme.WIDTH, theme.TAB_BAR_HEIGHT), theme.BACKGROUND, panels)
 
         hits = []
-        tab_width, pill_height, left = (168 if len(self._tabs) <= 2 else 140), 44, 16
-        for index, tab in enumerate(self._tabs):
-            pill = pygame.Rect(left + index * (tab_width + 8), 0, tab_width, pill_height)
-            pill.centery = center_y
+        for index, (tab, pill) in enumerate(zip(self._tabs, pills)):
             key = f"tab:{index}"
             active = index == self._active
-            if active or self.pressed == key:
-                color = theme.PRESSED if self.pressed == key else theme.SURFACE_HIGH
-                pygame.draw.rect(screen, color, pill, border_radius=pill_height // 2)
-            label = f.render(tab.title, 20, theme.TEXT if active else theme.TEXT_FAINT, bold=active)
+            label = f.render(tab.title, 20, theme.TEXT if active else theme.TEXT_DIM, bold=active)
             centered_text(screen, label, pill.center)
             hits.append(Hit(key, pygame.Rect(pill.left, 0, pill.width, theme.TAB_BAR_HEIGHT)))
 
         # Right to left: output pill, quick light toggle (if lights are set up and reachable), PC power button.
-        hits += self._outputs.draw_pill(screen, theme.WIDTH - 16, center_y, self.pressed)
+        hits += self._outputs.draw_pill(screen, bar.right - 7, center_y, self.pressed)
         next_x = self._outputs.pill_left - 28
         if self._lights is not None and (light_hits := draw_quick_toggle(screen, self._store, (next_x, center_y), self.pressed)):
             hits += light_hits
@@ -352,10 +383,11 @@ class App:
         button.center = (area.centerx, area.centery + 52)
         pressed = self.pressed == WAKE_KEY
         if waking:
-            fill, ink = (theme.PRESSED if pressed else theme.SURFACE_HIGH), theme.TEXT_DIM
+            ink = theme.TEXT_DIM
+            glass.draw(screen, button, button.height // 2, glass.LENS_PRESSED if pressed else glass.LENS)
         else:
-            fill, ink = (theme.ACCENT_PRESSED if pressed else theme.ACCENT), theme.BACKGROUND
-        pygame.draw.rect(screen, fill, button, border_radius=button.height // 2)
+            ink = theme.BACKGROUND
+            glass.draw(screen, button, button.height // 2, glass.TINTED_PRESSED if pressed else glass.TINTED, theme.ACCENT)
         label = f.render("Send again" if waking else "Turn on PC", 20, ink, bold=True)
         icon_x = button.centerx - (label.get_width() + 34) // 2 + 11
         power_icon(screen, (icon_x, button.centery), 24, ink)

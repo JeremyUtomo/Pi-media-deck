@@ -10,10 +10,10 @@ import pygame
 
 from deck.net import NetClient
 from deck.state import MediaState, Store
-from deck.ui import theme
+from deck.ui import glass, theme
 from deck.ui.tab import Tab
 from deck.ui.theme import Fonts
-from deck.ui.widgets import Hit, centered_text, circle_hit, filled_circle, knob, media_icon, rounded
+from deck.ui.widgets import Hit, centered_text, circle_hit, knob, media_icon, rounded
 
 ART_SIZE = 300
 MARGIN = 32
@@ -42,6 +42,7 @@ class SpotifyTab(Tab):
         self._net = net
         self._fonts = fonts
         self._art: OrderedDict[str, pygame.Surface] = OrderedDict()
+        self._backplate = glass.Backplate()
         # Marquee state: the title strip on screen (None when the title fits), its text, and when it started.
         self._marquee_rect: pygame.Rect | None = None
         self._marquee_text: pygame.Surface | None = None
@@ -73,12 +74,18 @@ class SpotifyTab(Tab):
             return []
 
         art_rect = pygame.Rect(area.left + MARGIN, area.top + (area.height - ART_SIZE) // 2, ART_SIZE, ART_SIZE)
-        self._draw_art(surface, media.art_hash, art_rect)
-
         info = pygame.Rect(art_rect.right + MARGIN, art_rect.top, area.right - MARGIN - art_rect.right - MARGIN, ART_SIZE)
+        controls = (info.centerx, info.bottom - 40)
+
+        # The glass (art placeholder, buttons) as one cached image: this tab redraws 4x/s while a track plays.
+        panels = [] if self._art_surface(media.art_hash) is not None else [glass.panel(art_rect, theme.RADIUS_ART, glass.CARD)]
+        panels += self._control_panels(controls, pressed)
+        self._backplate.draw(surface, area, theme.BACKGROUND, panels)
+
+        self._draw_art(surface, media.art_hash, art_rect)
         self._draw_text(surface, media, info)
         self._draw_progress(surface, media, pygame.Rect(info.left, info.top + 150, info.width, 8))
-        return self._draw_controls(surface, media, (info.centerx, info.bottom - 40), pressed)
+        return self._draw_controls(surface, media, controls, pressed)
 
     def _draw_idle(self, surface: pygame.Surface, area: pygame.Rect) -> None:
         f = self._fonts
@@ -90,7 +97,6 @@ class SpotifyTab(Tab):
         if art is not None:
             surface.blit(art, rect)
             return
-        pygame.draw.rect(surface, theme.SURFACE, rect, border_radius=theme.RADIUS_ART)
         centered_text(surface, self._fonts.render("♪", 96, theme.TEXT_FAINT), rect.center)
 
     def _art_surface(self, art_hash: str | None) -> pygame.Surface | None:
@@ -181,6 +187,15 @@ class SpotifyTab(Tab):
         surface.blit(elapsed, (bar.left, bar.bottom + 12))
         surface.blit(total, (bar.right - total.get_width(), bar.bottom + 12))
 
+    @staticmethod
+    def _control_panels(center: tuple[int, int], pressed: str | None) -> list[glass.Panel]:
+        cx, cy = center
+        panels = [glass.circle_panel((x, cy), 32, glass.LENS_PRESSED if pressed == key else glass.LENS)
+                  for key, x in (("previous", cx - 110), ("next", cx + 110))]
+        style = glass.TINTED_PRESSED if pressed == "play_pause" else glass.TINTED
+        panels.append(glass.circle_panel((cx, cy), 40, style, theme.ACCENT))
+        return panels
+
     def _draw_controls(
         self, surface: pygame.Surface, media: MediaState, center: tuple[int, int], pressed: str | None
     ) -> list[Hit]:
@@ -188,12 +203,10 @@ class SpotifyTab(Tab):
         hits = []
 
         for key, x, enabled in (("previous", cx - 110, media.can_previous), ("next", cx + 110, media.can_next)):
-            filled_circle(surface, (x, cy), 32, theme.PRESSED if pressed == key else theme.SURFACE)
             media_icon(surface, key, (x, cy), 22, theme.TEXT if enabled else theme.TEXT_FAINT)
             if enabled:
                 hits.append(circle_hit(key, (x, cy), 34))
 
-        filled_circle(surface, (cx, cy), 40, theme.ACCENT_PRESSED if pressed == "play_pause" else theme.ACCENT)
         media_icon(surface, "pause" if media.is_playing else "play", (cx, cy), 26, theme.BACKGROUND)
         hits.append(circle_hit("play_pause", (cx, cy), 40))
         return hits

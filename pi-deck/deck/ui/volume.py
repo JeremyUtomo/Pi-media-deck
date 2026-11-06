@@ -11,10 +11,10 @@ import pygame
 
 from deck.net import NetClient
 from deck.state import Store
-from deck.ui import theme
+from deck.ui import glass, theme
 from deck.ui.tab import Tab
 from deck.ui.theme import Fonts
-from deck.ui.widgets import Hit, centered_text, filled_circle, headphones_icon, knob, mic_icon, speaker_icon
+from deck.ui.widgets import Hit, centered_text, headphones_icon, knob, mic_icon, speaker_icon
 
 MASTER_ID = "master"
 STRIP_WIDTH = 132
@@ -51,6 +51,7 @@ class VolumeTab(Tab):
         self._net = net
         self._fonts = fonts
         self._icons: dict[str, pygame.Surface] = {}
+        self._backplate = glass.Backplate()
         self._scroll = 0.0
         self._max_scroll = 0.0
         self._area = pygame.Rect(0, theme.TAB_BAR_HEIGHT, theme.WIDTH, theme.HEIGHT - theme.TAB_BAR_HEIGHT)
@@ -132,34 +133,42 @@ class VolumeTab(Tab):
         return strips
 
     def draw(self, surface: pygame.Surface, area: pygame.Rect, pressed: str | None) -> list[Hit]:
-        self._area = area
-        sidebar_hits: list[Hit] = []
+        self._area = full = area
+        sidebar: pygame.Rect | None = None
         discord = self._store.discord or {}
         if discord.get("status") == "ready" and discord.get("inCall"):
             # In a Discord call: a sidebar with mute/deafen on the right; the mixer gets the rest (and scrolls).
             sidebar = pygame.Rect(area.right - 16 - SIDEBAR_WIDTH, area.top + 8, SIDEBAR_WIDTH, area.height - 16)
-            sidebar_hits = self._draw_discord(surface, sidebar, discord, pressed)
             area = pygame.Rect(area.left, area.top, sidebar.left - 8 - area.left, area.height)
 
         strips = self._strips()
-        if not strips:
-            centered_text(surface, self._fonts.render("No audio info yet", 22, theme.TEXT_FAINT), area.center)
-            return sidebar_hits
-
         total = len(strips) * STRIP_WIDTH
         self._max_scroll = max(0.0, float(total - area.width))
         self._scroll = min(self._scroll, self._max_scroll)
         left = area.left + (area.width - total) // 2 if total <= area.width else area.left - round(self._scroll)
+        visible = []
+        for index, strip in enumerate(strips):
+            rect = pygame.Rect(left + index * STRIP_WIDTH, area.top, STRIP_WIDTH, area.height)
+            if rect.right >= area.left and rect.left <= area.right:
+                visible.append((strip, rect))
+
+        # All glass first, as one cached image (unchanged while a slider is dragged), then the content on top.
+        panels = self._discord_panels(sidebar, discord, pressed) if sidebar else []
+        for strip, rect in visible:
+            panels += self._strip_panels(strip, rect, pressed, area)
+        self._backplate.draw(surface, full, theme.BACKGROUND, panels)
+
+        sidebar_hits = self._draw_discord(surface, sidebar, discord, pressed) if sidebar else []
+        if not strips:
+            centered_text(surface, self._fonts.render("No audio info yet", 22, theme.TEXT_FAINT), area.center)
+            return sidebar_hits
 
         # Lowest-priority hit: lets a horizontal swipe anywhere in the mixer scroll it.
         hits = [Hit("scroll", area, draggable=True)]
         now = time.monotonic()
         clip = surface.get_clip()
         surface.set_clip(area)
-        for index, strip in enumerate(strips):
-            rect = pygame.Rect(left + index * STRIP_WIDTH, area.top, STRIP_WIDTH, area.height)
-            if rect.right < area.left or rect.left > area.right:
-                continue
+        for strip, rect in visible:
             hits += self._draw_strip(surface, strip, rect, pressed, now)
         surface.set_clip(clip)
 
@@ -167,16 +176,38 @@ class VolumeTab(Tab):
             self._draw_scrollbar(surface, area, total)
         return [Hit(h.key, h.rect.clip(area), h.draggable) for h in hits] + sidebar_hits
 
+    def _discord_buttons(self, card: pygame.Rect, discord: dict):
+        buttons = (
+            ("discord:mute", "Mute", "Muted", bool(discord.get("muted")), mic_icon),
+            ("discord:deafen", "Deafen", "Deafened", bool(discord.get("deafened")), headphones_icon),
+        )
+        height = (card.bottom - 12 - (card.top + 124) - 10) // 2
+        for index, (key, label, active_label, active, icon_fn) in enumerate(buttons):
+            button = pygame.Rect(card.left + 12, card.top + 124 + index * (height + 10), card.width - 24, height)
+            yield key, label, active_label, active, icon_fn, button
+
+    def _discord_icon(self) -> pygame.Surface | None:
+        session = next((s for s in (self._store.audio or {}).get("sessions", []) if s["id"] == "discord.exe"), None)
+        return self._icon_surface(session.get("iconHash") if session else None)
+
+    def _discord_panels(self, card: pygame.Rect, discord: dict, pressed: str | None) -> list[glass.Panel]:
+        panels = [glass.panel(card, theme.RADIUS_CARD, glass.CARD)]
+        if self._discord_icon() is None:
+            panels.append(glass.circle_panel((card.centerx, card.top + 40), ICON_SIZE // 2, glass.LENS))
+        for key, _, _, active, _, button in self._discord_buttons(card, discord):
+            if active:
+                panels.append(glass.panel(button, 18, glass.TINTED_PRESSED if pressed == key else glass.TINTED, theme.MUTED))
+            else:
+                panels.append(glass.panel(button, 18, glass.LENS_PRESSED if pressed == key else glass.LENS))
+        return panels
+
     def _draw_discord(self, surface: pygame.Surface, card: pygame.Rect, discord: dict, pressed: str | None) -> list[Hit]:
         f = self._fonts
-        pygame.draw.rect(surface, theme.SURFACE, card, border_radius=theme.RADIUS_CARD)
-        session = next((s for s in (self._store.audio or {}).get("sessions", []) if s["id"] == "discord.exe"), None)
-        icon = self._icon_surface(session.get("iconHash") if session else None)
+        icon = self._discord_icon()
         center = (card.centerx, card.top + 40)
         if icon is not None:
             surface.blit(icon, icon.get_rect(center=center))
         else:
-            filled_circle(surface, center, ICON_SIZE // 2, theme.SURFACE_HIGH)
             centered_text(surface, f.render("D", 22, theme.TEXT_DIM, bold=True), center)
         centered_text(surface, f.render("In call", 14, theme.TEXT_FAINT), (card.centerx, card.top + 80))
         # No emoji font on the Pi: drop emoji (common in channel names) rather than show empty boxes.
@@ -185,18 +216,8 @@ class VolumeTab(Tab):
         centered_text(surface, channel, (card.centerx, card.top + 100))
 
         hits = []
-        buttons = (
-            ("discord:mute", "Mute", "Muted", bool(discord.get("muted")), mic_icon),
-            ("discord:deafen", "Deafen", "Deafened", bool(discord.get("deafened")), headphones_icon),
-        )
-        height = (card.bottom - 12 - (card.top + 124) - 10) // 2
-        for index, (key, label, active_label, active, icon_fn) in enumerate(buttons):
-            button = pygame.Rect(card.left + 12, card.top + 124 + index * (height + 10), card.width - 24, height)
-            if active:
-                color, ink = theme.MUTED, theme.BACKGROUND
-            else:
-                color, ink = (theme.PRESSED if pressed == key else theme.SURFACE_HIGH), theme.TEXT
-            pygame.draw.rect(surface, color, button, border_radius=18)
+        for key, label, active_label, active, icon_fn, button in self._discord_buttons(card, discord):
+            ink = theme.BACKGROUND if active else theme.TEXT
             icon_fn(surface, (button.centerx, button.centery - 14), 40, ink, slashed=active)
             text = f.render(active_label if active else label, 17, ink, bold=active)
             centered_text(surface, text, (button.centerx, button.bottom - 22))
@@ -211,7 +232,6 @@ class VolumeTab(Tab):
         volume = override[0] if override is not None and now < override[1] else strip.volume
 
         card = rect.inflate(-2 * CARD_GAP_X, -2 * CARD_GAP_Y)
-        pygame.draw.rect(surface, theme.SURFACE, card, border_radius=theme.RADIUS_CARD)
         self._draw_icon(surface, strip, (cx, rect.top + ICON_CENTER_Y))
         name = f.render(strip.name, 16, theme.TEXT if strip.id == MASTER_ID else theme.TEXT_DIM,
                         bold=strip.id == MASTER_ID, max_width=rect.width - 16)
@@ -230,21 +250,39 @@ class VolumeTab(Tab):
         percent = f.render(f"{round(volume * 100)}%", 20, theme.TEXT_FAINT if strip.muted else theme.TEXT, bold=True)
         centered_text(surface, percent, (cx, track.bottom + 22))
 
-        button = pygame.Rect((0, 0), MUTE_SIZE)
-        button.center = (cx, card.bottom - 10 - MUTE_SIZE[1] // 2)
-        if strip.muted:
-            color = theme.MUTED
-        else:
-            color = theme.PRESSED if pressed == mute_key else theme.SURFACE_HIGH
-        pygame.draw.rect(surface, color, button, border_radius=MUTE_SIZE[1] // 2)
+        button = self._mute_button(card)
         speaker_icon(surface, button.center, 22, theme.BACKGROUND if strip.muted else theme.TEXT, muted=strip.muted)
 
         slider_hit = pygame.Rect(rect.left, track.top - 20, rect.width, track.height + 40)
         return [Hit(volume_key, slider_hit, draggable=True), Hit(mute_key, button.inflate(12, 12))]
 
+    @staticmethod
+    def _mute_button(card: pygame.Rect) -> pygame.Rect:
+        button = pygame.Rect((0, 0), MUTE_SIZE)
+        button.center = (card.centerx, card.bottom - 10 - MUTE_SIZE[1] // 2)
+        return button
+
+    def _strip_panels(self, strip: Strip, rect: pygame.Rect, pressed: str | None, clip: pygame.Rect) -> list[glass.Panel]:
+        """The strip's glass: card, icon circle (master, or no app icon), mute button."""
+        card = rect.inflate(-2 * CARD_GAP_X, -2 * CARD_GAP_Y)
+        mute_key = f"mute:{strip.id}"
+        panels = [glass.panel(card, theme.RADIUS_CARD, glass.CARD, clip=clip)]
+        center = (rect.centerx, rect.top + ICON_CENTER_Y)
+        if strip.id == MASTER_ID:
+            panels.append(glass.circle_panel(center, ICON_SIZE // 2, glass.TINTED, theme.ACCENT, clip=clip))
+        elif self._icon_surface(strip.icon_hash) is None:
+            panels.append(glass.circle_panel(center, ICON_SIZE // 2, glass.LENS, clip=clip))
+        button = self._mute_button(card)
+        if strip.muted:
+            style = glass.TINTED_PRESSED if pressed == mute_key else glass.TINTED
+            panels.append(glass.panel(button, MUTE_SIZE[1] // 2, style, theme.MUTED, clip=clip))
+        else:
+            style = glass.LENS_PRESSED if pressed == mute_key else glass.LENS
+            panels.append(glass.panel(button, MUTE_SIZE[1] // 2, style, clip=clip))
+        return panels
+
     def _draw_icon(self, surface: pygame.Surface, strip: Strip, center: tuple[int, int]) -> None:
         if strip.id == MASTER_ID:
-            filled_circle(surface, center, ICON_SIZE // 2, theme.ACCENT)
             speaker_icon(surface, center, 26, theme.BACKGROUND)
             return
         icon = self._icon_surface(strip.icon_hash)
@@ -252,7 +290,6 @@ class VolumeTab(Tab):
             surface.blit(icon, icon.get_rect(center=center))
             return
         # No icon (system sounds, elevated apps): first letter in a circle.
-        filled_circle(surface, center, ICON_SIZE // 2, theme.SURFACE_HIGH)
         centered_text(surface, self._fonts.render(strip.name[:1].upper() or "?", 22, theme.TEXT_DIM, bold=True), center)
 
     def _icon_surface(self, icon_hash: str | None) -> pygame.Surface | None:
@@ -273,5 +310,5 @@ class VolumeTab(Tab):
         track = pygame.Rect(area.left + 40, area.bottom - 4, area.width - 80, 3)
         thumb_width = max(24, round(track.width * area.width / total))
         thumb_left = track.left + round((track.width - thumb_width) * self._scroll / self._max_scroll)
-        pygame.draw.rect(surface, theme.SURFACE, track, border_radius=2)
+        pygame.draw.rect(surface, theme.TRACK, track, border_radius=2)
         pygame.draw.rect(surface, theme.TEXT_FAINT, (thumb_left, track.top, thumb_width, track.height), border_radius=2)
