@@ -52,6 +52,12 @@ TINTED = GlassStyle(fill=(255, 255, 255, 0), highlight=62, rim_top=150, rim_bott
                     shadow_offset=2, shadow_blur=5, blur=0)
 TINTED_PRESSED = GlassStyle(fill=(40, 20, 10, 30), highlight=20, rim_top=110, rim_bottom=30, shadow=18,
                             shadow_offset=1, shadow_blur=4, blur=0)
+# In a Backplate, a pressed button is cached in its normal style with this drawn over it, so pressing and
+# releasing don't rebuild the cached image (that cost 30–45 ms per press and again per release on the Pi).
+PRESS_OVERLAY = GlassStyle(fill=(176, 128, 82, 52), highlight=0, rim_top=0, rim_bottom=0, shadow=0, blur=0)  # warm: cocoa looked grey
+PRESS_OVERLAY_TINTED = GlassStyle(fill=(48, 20, 8, 56), highlight=0, rim_top=0, rim_bottom=0, shadow=0, blur=0)
+# pressed style -> (style it's cached as, overlay drawn on top while pressed)
+_UNPRESSED = {LENS_PRESSED: (LENS, PRESS_OVERLAY), TINTED_PRESSED: (TINTED, PRESS_OVERLAY_TINTED)}
 
 MAX_CACHED = 400
 
@@ -125,6 +131,9 @@ class Backplate:
     def draw(self, surface: pygame.Surface, area: pygame.Rect, background: tuple[int, int, int],
              panels: list[Panel]) -> None:
         area = pygame.Rect(area)
+        pressed = [p for p in panels if p[2] in _UNPRESSED]
+        panels = [(rect, radius, _UNPRESSED[style][0] if style in _UNPRESSED else style, color, clip)
+                  for rect, radius, style, color, clip in panels]
         key = (tuple(area), background, tuple(panels))
         if key != self._key or self._image is None:
             image = pygame.Surface(area.size).convert()
@@ -136,6 +145,11 @@ class Backplate:
             dither(image, area.topleft)
             self._key, self._image = key, image
         surface.blit(self._image, area.topleft)
+        previous_clip = surface.get_clip()
+        for rect, radius, style, _, clip in pressed:
+            surface.set_clip(None if clip is None else pygame.Rect(clip))
+            draw(surface, pygame.Rect(rect), radius, _UNPRESSED[style][1])
+        surface.set_clip(previous_clip)
 
 
 # 4x4 ordered (Bayer) dither, 0–3 per channel. The HyperPixel's DPI link is 18-bit (6 bits per colour), so the

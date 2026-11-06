@@ -63,6 +63,15 @@ class SpotifyTab(Tab):
         media = self._store.media
         return media is not None and media.available and media.is_playing
 
+    def animation_delay_s(self) -> float:
+        """Redraw when the elapsed time (m:ss) next changes, i.e. once a second, just after the tick. The bar
+        moves ~1–3 px per second, so this is smooth enough and far cheaper than redrawing continuously."""
+        media = self._store.media
+        if media is None:
+            return 1.0
+        position = media.position_at(int(time.time() * 1000))
+        return (1000 - position % 1000) / 1000 + 0.005
+
     def on_tap(self, key: str, pos: tuple[float, float]) -> None:
         self._net.send({"type": "media.command", "action": key})
 

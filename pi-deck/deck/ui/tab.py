@@ -21,6 +21,11 @@ class Tab:
         """True while the tab needs periodic redraws (e.g. a playing progress bar)."""
         return False
 
+    def animation_delay_s(self) -> float:
+        """While animating(): how long until the next redraw is needed. Override to redraw exactly when
+        something visibly changes (the Spotify tab: when the elapsed time ticks over)."""
+        return 0.25
+
     def busy(self) -> bool:
         """True while the tab has time-critical work for tick() (e.g. a throttled command to flush)."""
         return False

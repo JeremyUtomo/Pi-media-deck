@@ -32,7 +32,9 @@ MAX_POINTS = 5
 GOODIX_DRIVER = Path("/sys/bus/i2c/drivers/Goodix-TS")
 DEVICE_NAME = "pi-deck GT911 Touchscreen"
 
-IDLE_INTERVAL_S = 1 / 25
+# Idle polling sets how late the first contact of a tap is seen (up to one interval). 25 Hz (up to 40 ms) made
+# the deck feel laggy; 60 Hz costs ~4 % of a core (0.67 ms per status read) — fine now the deck idles at ~3 %.
+IDLE_INTERVAL_S = 1 / 60
 ACTIVE_INTERVAL_S = 1 / 60
 ACTIVE_HOLD_S = 0.5  # keep polling fast this long after the last contact
 REPROBE_AFTER_ERRORS = 50

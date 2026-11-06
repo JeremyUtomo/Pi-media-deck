@@ -31,12 +31,14 @@ from deck.wol import WakeOnLan
 log = logging.getLogger(__name__)
 
 IDLE_WAIT_MS = 1000
-ANIMATING_WAIT_MS = 250  # progress bar refresh while playing
+ANIMATING_WAIT_MS = 250  # fallback redraw interval for a tab that animates but doesn't say when it changes
 GESTURE_WAIT_MS = 50  # while a finger is down or a throttled command is pending
 DRAG_THRESHOLD_PX = 10  # movement before a press becomes a drag or scroll instead of a tap
 FADE_TO_AMBIENT_S = 1.0  # slow and calm into the album-cover view
 FADE_FROM_AMBIENT_S = 0.35  # quick back out, so a touch feels responsive
 FADE_WAIT_MS = 16
+LENS_SLIDE_S = 0.32  # the selected-tab lens glides to the new tab; the page itself switches instantly
+LENS_FPS = 60  # during the slide only the bar strip is redrawn and sent: labwc manages ~45 fps for that vs ~28 full-frame
 WAKE_KEY = "wake:pc"
 WAKE_BOOT_S = 120  # after "Turn on PC", show "Starting…" this long (the PC boots and the companion autostarts)
 
@@ -103,6 +105,13 @@ class App:
         self._waking_touch = False  # the touch that left the ambient view; ignored until released
         self._fade: _Fade | None = None
         self._bar_backplate = glass.Backplate()
+        # Lens slide: where it started (x) and when; None when it's resting on the active tab.
+        self._lens_from: float | None = None
+        self._lens_started = 0.0
+        self._lens_x: float | None = None  # where it was last drawn (a new slide starts from there)
+        # While a tab animates (a playing progress bar): when its next redraw is due. Only then, not every loop:
+        # redrawing at the 30 fps cap kept the deck at 35 % CPU and labwc at 83 % while music played.
+        self._next_animation_at = 0.0
         self._warmed: set[int] = set()  # tabs drawn once off-screen, so their glass is cached before the first visit
         self.pressed: str | None = None
         self.dirty = True
@@ -118,7 +127,8 @@ class App:
                 and time.monotonic() - self._offline_since >= self._dark_after_s)
 
     def needs_draw(self) -> bool:
-        return self.dirty or self.animating() or self._fade is not None
+        return (self.dirty or self._fade is not None
+                or (self.animating() and time.monotonic() >= self._next_animation_at))
 
     def select_tab(self, title: str) -> None:
         self._active = next(i for i, tab in enumerate(self._tabs) if tab.title.lower() == title.lower())
@@ -132,11 +142,15 @@ class App:
         return not self.ambient and self._store.connected and self._tab.animating()
 
     def wait_ms(self) -> int:
+        if self._lens_from is not None:
+            return 1  # presenting the bar strip paces the slide (~45 fps); a 16 ms wait on top halved it
         if self._fade is not None:
             return FADE_WAIT_MS
         if self._gesture is not None or self._tab.busy():
             return GESTURE_WAIT_MS
-        wait = ANIMATING_WAIT_MS if self.animating() else IDLE_WAIT_MS
+        wait = IDLE_WAIT_MS
+        if self.animating():
+            wait = max(1, min(wait, round((self._next_animation_at - time.monotonic()) * 1000)))
         if self._frames_active() and (interval := self._tab.frame_interval_ms()) is not None:
             wait = min(wait, interval)
         return wait
@@ -145,11 +159,22 @@ class App:
         return (not self.ambient and self._fade is None and self._store.connected
                 and not self._outputs.open and not self._power.open)
 
+    @property
+    def lens_moving(self) -> bool:
+        return self._lens_from is not None
+
     def draw_frame(self) -> list[pygame.Rect]:
-        """Partial redraw of self-moving parts (e.g. a scrolling title); returns the rects to update on screen."""
-        if not self._frames_active() or self._tab.frame_interval_ms() is None:
-            return []
-        return self._tab.draw_frame(self._screen)
+        """Partial redraw of self-moving parts (the sliding tab lens, a scrolling title); returns the rects to update."""
+        rects = []
+        if self._lens_from is not None and not self.ambient and self._fade is None:
+            # Just the bar strip: the page below was drawn in full when the tab was picked.
+            strip = pygame.Rect(0, 0, theme.WIDTH, theme.TAB_BAR_HEIGHT)
+            self._screen.fill(theme.BACKGROUND, strip)
+            self._draw_tab_bar()
+            rects.append(strip)
+        if self._frames_active() and self._tab.frame_interval_ms() is not None:
+            rects += self._tab.draw_frame(self._screen)
+        return rects
 
     def tick(self) -> None:
         if self._tab.tick():
@@ -265,7 +290,10 @@ class App:
         elif key == QUICK_KEY and self._lights is not None:
             toggle_all(self._store, self._lights)
         elif key.startswith("tab:"):
-            self._active = int(key.removeprefix("tab:"))
+            index = int(key.removeprefix("tab:"))
+            if index != self._active and self._lens_x is not None:
+                self._lens_from, self._lens_started = self._lens_x, time.monotonic()
+            self._active = index
         else:
             self._tab.on_tap(key, pos)
 
@@ -277,6 +305,7 @@ class App:
         if fade is None:
             self._render()
             self._set_backlight()
+            self._next_animation_at = time.monotonic() + self._tab.animation_delay_s()
             return
         progress = fade.progress(time.monotonic())
         if progress >= 1.0:
@@ -327,6 +356,18 @@ class App:
         self._hits = self._outputs.draw_menu(screen, self.pressed) or self._power.draw_dialog(screen, self.pressed) or hits
         self.dirty = False
 
+    def _lens_position(self, target: float) -> float:
+        """The lens's x now: easing (cubic ease-out) from where it was towards `target`, the active tab."""
+        x = target
+        if self._lens_from is not None:
+            t = (time.monotonic() - self._lens_started) / LENS_SLIDE_S
+            if t >= 1.0:
+                self._lens_from = None
+            else:
+                x = self._lens_from + (target - self._lens_from) * (1 - (1 - max(t, 0.0)) ** 3)
+        self._lens_x = x
+        return x
+
     def _draw_tab_bar(self) -> list[Hit]:
         screen, f = self._screen, self._fonts
         # One floating glass capsule; the selected tab is a brighter glass lens inside it.
@@ -339,14 +380,23 @@ class App:
             pill.centery = center_y
             pills.append(pill)
 
-        # The capsule and the tab lenses as one cached image (the strip behind them is always the plain page).
+        # The selected tab's lens, gliding to a newly picked tab (ease-out). At rest it's part of the cached,
+        # dithered backplate; while it moves it's one cached blit per frame on top.
+        lens = pills[self._active].copy()
+        lens.x = round(self._lens_position(lens.x))
+        moving = self._lens_from is not None
+        lens_style = glass.LENS_PRESSED if self.pressed == f"tab:{self._active}" else glass.LENS
+
+        # The capsule and the resting lenses as one cached image (the strip behind them is always the plain page).
         panels = [glass.panel(bar, bar.height // 2, glass.BAR)]
-        for index, pill in enumerate(pills):
-            if self.pressed == f"tab:{index}":
-                panels.append(glass.panel(pill, pill_height // 2, glass.LENS_PRESSED))
-            elif index == self._active:
-                panels.append(glass.panel(pill, pill_height // 2, glass.LENS))
+        if not moving:
+            panels.append(glass.panel(lens, pill_height // 2, lens_style))
         self._bar_backplate.draw(screen, pygame.Rect(0, 0, theme.WIDTH, theme.TAB_BAR_HEIGHT), theme.BACKGROUND, panels)
+        if moving:
+            glass.draw(screen, lens, pill_height // 2, lens_style)
+        for index, pill in enumerate(pills):  # a pressed tab that isn't selected: drawn directly, not cached
+            if self.pressed == f"tab:{index}" and index != self._active:
+                glass.draw(screen, pill, pill_height // 2, glass.LENS_PRESSED)
 
         hits = []
         for index, (tab, pill) in enumerate(zip(self._tabs, pills)):
@@ -492,7 +542,7 @@ def run(
             log.info("saved screenshot to %s", screenshot)
             running = False
 
-        clock.tick(config.fps)
+        clock.tick(LENS_FPS if app.lens_moving else config.fps)
 
     if backlight is not None:
         backlight.set(True)  # never leave the screen dark when the deck stops
