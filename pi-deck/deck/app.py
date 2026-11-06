@@ -20,6 +20,7 @@ from deck.lights import LightsClient
 from deck.ui.ambient import AmbientView
 from deck.ui.lights import QUICK_KEY, LightsApi, LightsTab, draw_quick_toggle, reachable, toggle_all
 from deck.ui.outputs import OutputSelector
+from deck.ui.polarity import PolarityTab
 from deck.ui.power import PowerControl
 from deck.ui.spotify import SpotifyTab
 from deck.ui.tab import Tab
@@ -96,7 +97,8 @@ class App:
         self._ambient = AmbientView(store, fonts, ambient_brightness)
         self._outputs = OutputSelector(store, net, fonts)
         self._power = PowerControl(store, net, fonts)
-        self._tabs: list[Tab] = [VolumeTab(store, net, fonts), SpotifyTab(store, net, fonts)]
+        # The Polarity tab is always in the list but only shown (and reachable) while Polarity runs on the PC.
+        self._tabs: list[Tab] = [VolumeTab(store, net, fonts), SpotifyTab(store, net, fonts), PolarityTab(store, net, fonts)]
         if lights is not None:
             self._tabs.append(LightsTab(store, lights, fonts, lights_title))
         self._active = 1
@@ -177,6 +179,14 @@ class App:
         return rects
 
     def tick(self) -> None:
+        if not self._tab.visible():
+            # Polarity closed, or the tab was turned off in the PC app's settings: Spotify, else Volume.
+            spotify = next(i for i, tab in enumerate(self._tabs) if isinstance(tab, SpotifyTab))
+            self._active = spotify if self._tabs[spotify].visible() else 0
+            self.dirty = True
+        if (self._outputs.open and not self._store.shows("outputs")) or (self._power.open and not self._store.shows("power")):
+            self._outputs.open = self._power.open = False
+            self.dirty = True
         if self._tab.tick():
             self.dirty = True
         if self._gesture is None and self._fade is None and not self.ambient:
@@ -206,7 +216,7 @@ class App:
         ~0.6 s on the Pi Zero; better now than on the first tap)."""
         self._warmed.add(self._active)
         for index, tab in enumerate(self._tabs):
-            if index in self._warmed or (tab.needs_pc and not self._store.connected):
+            if index in self._warmed or not tab.visible() or (tab.needs_pc and not self._store.connected):
                 continue
             if isinstance(tab, LightsTab) and not self._store.lamps:
                 continue
@@ -254,6 +264,7 @@ class App:
             gesture.axis = "y" if gesture.hit.horizontal or abs(dy) >= abs(dx) else "x"
             if gesture.axis == "x":
                 self.pressed = None
+                self._tab.on_scroll_begin(gesture.hit.key)
         if gesture.axis == "x":
             self._tab.on_scroll(pos[0] - gesture.last[0])
         else:
@@ -373,12 +384,14 @@ class App:
         # One floating glass capsule; the selected tab is a brighter glass lens inside it.
         bar = pygame.Rect(theme.BAR_MARGIN, theme.BAR_TOP, theme.WIDTH - 2 * theme.BAR_MARGIN, theme.BAR_HEIGHT)
         center_y = bar.centery
-        tab_width, pill_height, left = (164 if len(self._tabs) <= 2 else 136), bar.height - 10, bar.left + 5
-        pills = []
-        for index in range(len(self._tabs)):
-            pill = pygame.Rect(left + index * (tab_width + 4), 0, tab_width, pill_height)
+        shown = [index for index, tab in enumerate(self._tabs) if tab.visible() or index == self._active]
+        tab_width = {1: 164, 2: 164, 3: 136}.get(len(shown), 112)  # 4 tabs (Polarity running): narrower
+        pill_height, left = bar.height - 10, bar.left + 5
+        pills: dict[int, pygame.Rect] = {}
+        for slot, index in enumerate(shown):
+            pill = pygame.Rect(left + slot * (tab_width + 4), 0, tab_width, pill_height)
             pill.centery = center_y
-            pills.append(pill)
+            pills[index] = pill
 
         # The selected tab's lens, gliding to a newly picked tab (ease-out). At rest it's part of the cached,
         # dithered backplate; while it moves it's one cached blit per frame on top.
@@ -394,25 +407,28 @@ class App:
         self._bar_backplate.draw(screen, pygame.Rect(0, 0, theme.WIDTH, theme.TAB_BAR_HEIGHT), theme.BACKGROUND, panels)
         if moving:
             glass.draw(screen, lens, pill_height // 2, lens_style)
-        for index, pill in enumerate(pills):  # a pressed tab that isn't selected: drawn directly, not cached
+        for index, pill in pills.items():  # a pressed tab that isn't selected: drawn directly, not cached
             if self.pressed == f"tab:{index}" and index != self._active:
                 glass.draw(screen, pill, pill_height // 2, glass.LENS_PRESSED)
 
         hits = []
-        for index, (tab, pill) in enumerate(zip(self._tabs, pills)):
+        for index, pill in pills.items():
+            tab = self._tabs[index]
             key = f"tab:{index}"
             active = index == self._active
-            label = f.render(tab.title, 20, theme.TEXT if active else theme.TEXT_DIM, bold=active)
+            label = f.render(tab.title, 20 if tab_width > 112 else 19, theme.TEXT if active else theme.TEXT_DIM, bold=active)
             centered_text(screen, label, pill.center)
             hits.append(Hit(key, pygame.Rect(pill.left, 0, pill.width, theme.TAB_BAR_HEIGHT)))
 
         # Right to left: output pill, quick light toggle (if lights are set up and reachable), PC power button.
-        hits += self._outputs.draw_pill(screen, bar.right - 7, center_y, self.pressed)
+        hits += self._outputs.draw_pill(screen, bar.right - 7, center_y, self.pressed, interactive=self._store.shows("outputs"))
         next_x = self._outputs.pill_left - 28
-        if self._lights is not None and (light_hits := draw_quick_toggle(screen, self._store, (next_x, center_y), self.pressed)):
+        if (self._lights is not None and self._store.shows("lights")
+                and (light_hits := draw_quick_toggle(screen, self._store, (next_x, center_y), self.pressed))):
             hits += light_hits
             next_x -= 44
-        hits += self._power.draw_button(screen, (next_x, center_y), self.pressed)
+        if self._store.shows("power"):
+            hits += self._power.draw_button(screen, (next_x, center_y), self.pressed)
         return hits
 
     def _draw_disconnected(self, area: pygame.Rect) -> list[Hit]:

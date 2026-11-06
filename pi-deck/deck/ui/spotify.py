@@ -50,6 +50,9 @@ class SpotifyTab(Tab):
         self._marquee_started = 0.0
         self._fades: tuple[int, pygame.Surface, pygame.Surface] | None = None
 
+    def visible(self) -> bool:
+        return self._store.shows("spotify")
+
     def frame_interval_ms(self) -> int | None:
         return MARQUEE_FRAME_MS if self._marquee_rect is not None else None
 

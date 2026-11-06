@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from deck import lights, net
 
 MAX_CACHED_IMAGES = 32
+MAX_CACHED_POSTERS = 80  # Polarity: Continue Watching + library + now playing
+# What the deck shows, set in the PC app's "Deck settings" (deck.settings). Kept while the PC is away.
+DEFAULT_SHOW = {"spotify": True, "polarity": True, "lights": True, "discord": True, "power": True, "outputs": True}
 
 
 @dataclass(frozen=True)
@@ -52,10 +55,14 @@ class MediaState:
 class ImageCache(OrderedDict[str, bytes]):
     """Raw image bytes by hash, oldest evicted first."""
 
+    def __init__(self, limit: int = MAX_CACHED_IMAGES) -> None:
+        super().__init__()
+        self.limit = limit
+
     def put(self, key: str, data: bytes) -> None:
         self[key] = data
         self.move_to_end(key)
-        while len(self) > MAX_CACHED_IMAGES:
+        while len(self) > self.limit:
             self.popitem(last=False)
 
 
@@ -70,6 +77,13 @@ class Store:
         self.icons = ImageCache()
         self.lamps: list[dict] | None = None  # from the DIRIGERA hub (deck/lights.py); None while unavailable
         self.discord: dict | None = None  # raw discord.state from the PC
+        self.polarity: dict | None = None  # raw polarity.state: running, playing, continue, library
+        self.posters = ImageCache(MAX_CACHED_POSTERS)
+        self.show = dict(DEFAULT_SHOW)
+
+    def shows(self, name: str) -> bool:
+        """Whether a part of the deck is switched on in the PC app's settings (unknown parts are on)."""
+        return self.show.get(name, True)
 
     def apply(self, message: dict) -> bool:
         """Applies one message. Returns True if anything visible may have changed."""
@@ -80,6 +94,7 @@ class Store:
             case net.NET_DISCONNECTED:
                 self.connected = False
                 self.server = None
+                self.polarity = None  # its tab hides with the PC gone
             case "hello":
                 self.server = message.get("server")
             case "media.state":
@@ -92,6 +107,12 @@ class Store:
                 self.icons.put(message["hash"], message["bytes"])
             case "discord.state":
                 self.discord = message
+            case "deck.settings":
+                self.show = {**DEFAULT_SHOW, **{k: bool(v) for k, v in (message.get("show") or {}).items()}}
+            case "polarity.state":
+                self.polarity = message
+            case "polarity.art":
+                self.posters.put(message["hash"], message["bytes"])
             case lights.LIGHTS_STATE:
                 self.lamps = message["lamps"]
             case lights.LIGHTS_UNAVAILABLE:

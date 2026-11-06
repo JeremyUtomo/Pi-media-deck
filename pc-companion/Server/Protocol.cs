@@ -2,6 +2,8 @@ using System.Text.Json;
 using PcCompanion.Audio;
 using PcCompanion.Discord;
 using PcCompanion.Media;
+using PcCompanion.Polarity;
+using PcCompanion.Tray;
 
 namespace PcCompanion.Server;
 
@@ -67,6 +69,41 @@ public static class Protocol
         hash = icon.Hash,
         mime = icon.Mime,
         data = Convert.ToBase64String(icon.Data),
+    });
+
+    public static string PolarityState(PolarityState s) => Serialize(new
+    {
+        type = "polarity.state",
+        running = s.Running,
+        playing = s.Playing is not { } p ? null : new
+        {
+            title = p.Title,
+            subtitle = p.Subtitle,
+            posterHash = p.PosterHash,
+            durationMs = p.DurationMs,
+            positionMs = p.PositionMs,
+            positionUpdatedAt = p.PositionUpdatedAt,
+            isPlaying = p.IsPlaying,
+        },
+        @continue = s.Continue.Select(Card),
+        library = s.Library.Select(Card),
+    });
+
+    private static object Card(PolarityCard c) =>
+        new { id = c.Id, title = c.Title, subtitle = c.Subtitle, posterHash = c.PosterHash, progress = c.Progress };
+
+    public static string DeckSettings(DeckSettings s) => Serialize(new
+    {
+        type = "deck.settings",
+        show = new { spotify = s.Spotify, polarity = s.Polarity, lights = s.Lights, discord = s.Discord, power = s.Power, outputs = s.Outputs },
+    });
+
+    public static string PolarityArt(AlbumArt art) => Serialize(new
+    {
+        type = "polarity.art",
+        hash = art.Hash,
+        mime = art.Mime,
+        data = Convert.ToBase64String(art.Data),
     });
 
     private static string Serialize(object message) => JsonSerializer.Serialize(message, Json);

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using PcCompanion.Audio;
 using PcCompanion.Discord;
 using PcCompanion.Media;
+using PcCompanion.Polarity;
 using PcCompanion.Server;
 using PcCompanion.Tray;
 
@@ -50,13 +51,16 @@ internal static class Program
         audio.Start();
         var discord = app.Services.GetRequiredService<DiscordService>();
         discord.Start();
+        var polarity = app.Services.GetRequiredService<PolarityService>();
+        polarity.Start();
         app.Logger.LogInformation("Listening on ws://0.0.0.0:{Port}", Port);
 
-        using (var tray = new TrayApp(hub, app.Services.GetRequiredService<ILogger<TrayApp>>(), Port, logPath))
+        using (var tray = new TrayApp(hub, app.Services.GetRequiredService<DeckSettingsStore>(), app.Services.GetRequiredService<ILogger<TrayApp>>(), Port, logPath))
             Application.Run(tray);
 
         app.Logger.LogInformation("Exiting");
         discord.Dispose();
+        polarity.Dispose();
         app.StopAsync().GetAwaiter().GetResult();
         return 0;
     }
@@ -71,6 +75,8 @@ internal static class Program
         builder.Services.AddSingleton(media);
         builder.Services.AddSingleton(audio);
         builder.Services.AddSingleton(sp => new DiscordService(dataDirectory, sp.GetRequiredService<ILogger<DiscordService>>()));
+        builder.Services.AddSingleton<PolarityService>();
+        builder.Services.AddSingleton(sp => new DeckSettingsStore(dataDirectory, sp.GetRequiredService<ILogger<DeckSettingsStore>>()));
         builder.Services.AddSingleton<DeckHub>();
 
         var app = builder.Build();

@@ -195,40 +195,7 @@ public sealed class MediaService : IDisposable
     private static async Task<AlbumArt> LoadArtAsync(IRandomAccessStreamReference thumbnail)
     {
         using var input = await thumbnail.OpenReadAsync();
-        var decoder = await BitmapDecoder.CreateAsync(input);
-
-        var scale = Math.Min(1.0, (double)ArtSize / Math.Max(decoder.PixelWidth, decoder.PixelHeight));
-        var transform = new BitmapTransform
-        {
-            ScaledWidth = (uint)Math.Max(1, Math.Round(decoder.PixelWidth * scale)),
-            ScaledHeight = (uint)Math.Max(1, Math.Round(decoder.PixelHeight * scale)),
-            InterpolationMode = BitmapInterpolationMode.Fant,
-        };
-        var pixels = await decoder.GetPixelDataAsync(
-            BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, transform,
-            ExifOrientationMode.RespectExifOrientation, ColorManagementMode.DoNotColorManage);
-
-        using var output = new InMemoryRandomAccessStream();
-        var options = new BitmapPropertySet
-        {
-            ["ImageQuality"] = new BitmapTypedValue(ArtQuality, PropertyType.Single),
-        };
-        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId, output, options);
-        encoder.SetPixelData(
-            BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore,
-            transform.ScaledWidth, transform.ScaledHeight,
-            decoder.DpiX, decoder.DpiY, pixels.DetachPixelData());
-        await encoder.FlushAsync();
-
-        var data = new byte[output.Size];
-        using (var reader = new DataReader(output.GetInputStreamAt(0)))
-        {
-            await reader.LoadAsync((uint)output.Size);
-            reader.ReadBytes(data);
-        }
-
-        var hash = Convert.ToHexString(SHA1.HashData(data))[..16].ToLowerInvariant();
-        return new AlbumArt(hash, "image/jpeg", data);
+        return await ArtEncoder.EncodeAsync(input, ArtSize, ArtSize, ArtQuality);
     }
 
     public void Dispose()

@@ -47,13 +47,15 @@ class OutputSelector:
                 self._net.send({"type": "audio.set_output", "id": self._menu_ids[index]})
             self.open = False
 
-    def draw_pill(self, surface: pygame.Surface, right: int, center_y: int, pressed: str | None) -> list[Hit]:
-        """The tab bar's right-hand pill: current output (tap to switch), or the connection state."""
+    def draw_pill(self, surface: pygame.Surface, right: int, center_y: int, pressed: str | None,
+                  interactive: bool = True) -> list[Hit]:
+        """The tab bar's right-hand pill: current output (tap to switch), or the connection state (also when the
+        switcher is turned off in the PC app's settings: `interactive=False`)."""
         f = self._fonts
         current, outputs = self._outputs()
         name = next((o["name"] for o in outputs if o["id"] == current), None)
 
-        if not self._store.connected or name is None:
+        if not self._store.connected or name is None or not interactive:
             connected = self._store.connected
             label = f.render("PC" if connected else "Connecting…", 16, theme.TEXT_DIM)
             pill = pygame.Rect(0, 0, label.get_width() + 46, PILL_HEIGHT - 4)

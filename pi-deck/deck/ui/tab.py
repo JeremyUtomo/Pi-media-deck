@@ -17,6 +17,10 @@ class Tab:
     title = ""
     needs_pc = True  # False for tabs that work without the PC connection (Lights)
 
+    def visible(self) -> bool:
+        """Whether the tab is in the tab bar right now (the Polarity tab: only while Polarity runs)."""
+        return True
+
     def animating(self) -> bool:
         """True while the tab needs periodic redraws (e.g. a playing progress bar)."""
         return False
@@ -50,6 +54,9 @@ class Tab:
 
     def on_drag_end(self, key: str, pos: tuple[float, float]) -> None:
         pass
+
+    def on_scroll_begin(self, key: str) -> None:
+        """A horizontal scroll started on the draggable hit `key` (tabs with more than one scrolling row)."""
 
     def on_scroll(self, dx: float) -> None:
         pass

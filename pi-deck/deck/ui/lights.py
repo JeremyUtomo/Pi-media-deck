@@ -64,6 +64,9 @@ class LightsTab(Tab):
     title = "Lights"
     needs_pc = False  # talks to the IKEA hub directly
 
+    def visible(self) -> bool:
+        return self._store.shows("lights")
+
     def __init__(self, store: Store, lights: LightsApi, fonts: Fonts, room_title: str) -> None:
         self._store = store
         self._lights = lights

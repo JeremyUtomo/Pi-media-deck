@@ -42,7 +42,7 @@ def main() -> None:
     parser.add_argument("--windowed", action="store_true", help="run in a window instead of fullscreen")
     parser.add_argument("--screenshot", type=Path, help="save a PNG of the screen and exit (for testing)")
     parser.add_argument("--after", type=float, default=5.0, help="seconds before --screenshot is taken")
-    parser.add_argument("--tab", choices=["volume", "spotify", "lights"], help="tab to show at start (default: spotify)")
+    parser.add_argument("--tab", choices=["volume", "spotify", "polarity", "lights"], help="tab to show at start (default: spotify)")
     parser.add_argument("--ambient", action="store_true", help="start in the ambient (album cover) view")
     args = parser.parse_args()
 

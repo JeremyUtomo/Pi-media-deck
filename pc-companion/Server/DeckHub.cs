@@ -8,6 +8,8 @@ using Microsoft.Extensions.Logging;
 using PcCompanion.Audio;
 using PcCompanion.Discord;
 using PcCompanion.Media;
+using PcCompanion.Polarity;
+using PcCompanion.Tray;
 
 namespace PcCompanion.Server;
 
@@ -33,15 +35,20 @@ public sealed class DeckHub
     private readonly MediaService _media;
     private readonly AudioService _audio;
     private readonly DiscordService _discord;
+    private readonly PolarityService _polarity;
+    private readonly DeckSettingsStore _settings;
     private readonly ILogger<DeckHub> _log;
     private readonly ConcurrentDictionary<DeckClient, byte> _clients = new();
     private string? _lastMediaSummary;
 
-    public DeckHub(MediaService media, AudioService audio, DiscordService discord, ILogger<DeckHub> log)
+    public DeckHub(MediaService media, AudioService audio, DiscordService discord, PolarityService polarity,
+        DeckSettingsStore settings, ILogger<DeckHub> log)
     {
         _media = media;
         _audio = audio;
         _discord = discord;
+        _polarity = polarity;
+        _settings = settings;
         _log = log;
 
         _discord.StateChanged += state =>
@@ -65,6 +72,19 @@ public sealed class DeckHub
         {
             foreach (var client in _clients.Keys)
                 SendAudio(client, state);
+        };
+        _polarity.StateChanged += state =>
+        {
+            foreach (var client in _clients.Keys)
+                SendPolarity(client, state);
+        };
+        _settings.Changed += settings =>
+        {
+            foreach (var client in _clients.Keys)
+            {
+                client.Send(Protocol.DeckSettings(settings));
+                SendPolarity(client, _polarity.Current); // hidden: the deck gets "not running" and no titles
+            }
         };
 
         _ = Task.Run(RunCommandsAsync);
@@ -120,11 +140,13 @@ public sealed class DeckHub
         try
         {
             client.Send(Protocol.Hello());
+            client.Send(Protocol.DeckSettings(_settings.Current));
             if (_media.Art is { } art)
                 client.Send(Protocol.MediaArt(art));
             client.Send(Protocol.MediaState(_media.Current));
             SendAudio(client, _audio.Current);
             client.Send(Protocol.DiscordState(_discord.Current));
+            SendPolarity(client, _polarity.Current);
 
             await ReceiveLoopAsync(client, ct);
         }
@@ -161,6 +183,25 @@ public sealed class DeckHub
                 client.SentIcons.Add(hash);
             }
             client.Send(Protocol.AudioState(state));
+        }
+    }
+
+    /// <summary>Sends the posters the client hasn't received yet, then the Polarity state that references them.</summary>
+    private void SendPolarity(DeckClient client, PolarityState state)
+    {
+        if (!_settings.Current.Polarity)
+            state = PolarityState.NotRunning; // hidden in the settings: send nothing about what's being watched
+        lock (client.SentIcons)
+        {
+            var hashes = state.Continue.Concat(state.Library).Select(c => c.PosterHash).Append(state.Playing?.PosterHash);
+            foreach (var hash in hashes.OfType<string>().Distinct())
+            {
+                if (client.SentIcons.Contains(hash) || _polarity.GetPoster(hash) is not { } poster)
+                    continue;
+                client.Send(Protocol.PolarityArt(poster));
+                client.SentIcons.Add(hash);
+            }
+            client.Send(Protocol.PolarityState(state));
         }
     }
 
@@ -269,6 +310,11 @@ public sealed class DeckHub
                     {
                         _log.LogWarning("Discord command '{Action}' failed: {Error}", discordAction, ex.Message);
                     }
+                    break;
+                case "polarity.command":
+                    var polarityAction = root.GetProperty("action").GetString() ?? "";
+                    if (!await _polarity.SendCommandAsync(polarityAction))
+                        _log.LogWarning("Polarity command '{Action}' had nothing to act on", polarityAction);
                     break;
                 case "audio.set_output":
                     var outputId = root.GetProperty("id").GetString() ?? "";

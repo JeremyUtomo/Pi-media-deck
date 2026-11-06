@@ -37,7 +37,7 @@ SIOCGIFNETMASK = 0x891B
 BACKOFF_START_S = 1.0
 BACKOFF_MAX_S = 10.0
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
-BINARY_MESSAGES = ("media.art", "audio.icon")
+BINARY_MESSAGES = ("media.art", "audio.icon", "polarity.art")
 
 
 class NetClient:

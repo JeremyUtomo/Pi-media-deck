@@ -9,6 +9,8 @@ namespace PcCompanion.Tray;
 internal sealed class TrayApp : ApplicationContext
 {
     private readonly DeckHub _hub;
+    private readonly DeckSettingsStore _settings;
+    private SettingsForm? _settingsForm;
     private readonly ILogger _log;
     private readonly int _port;
     private readonly string _logPath;
@@ -20,9 +22,10 @@ internal sealed class TrayApp : ApplicationContext
     private readonly Icon _waitingIcon = CreateIcon(Color.FromArgb(150, 150, 150));
     private readonly SynchronizationContext _ui;
 
-    public TrayApp(DeckHub hub, ILogger<TrayApp> log, int port, string logPath)
+    public TrayApp(DeckHub hub, DeckSettingsStore settings, ILogger<TrayApp> log, int port, string logPath)
     {
         _hub = hub;
+        _settings = settings;
         _log = log;
         _port = port;
         _logPath = logPath;
@@ -35,6 +38,7 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.AddRange([
             _status,
             new ToolStripSeparator(),
+            new ToolStripMenuItem("Deck settings…", null, (_, _) => OpenSettings()),
             _autostart,
             _firewall,
             new ToolStripMenuItem("Open log", null, (_, _) => OpenLog()),
@@ -86,6 +90,18 @@ internal sealed class TrayApp : ApplicationContext
         if (!added)
             _notifyIcon.ShowBalloonTip(5000, "Pi Media Deck", "The firewall rule was not added. See the log.", ToolTipIcon.Warning);
         RefreshMenu();
+    }
+
+    private void OpenSettings()
+    {
+        if (_settingsForm is { IsDisposed: false })
+        {
+            _settingsForm.Activate();
+            return;
+        }
+        _settingsForm = new SettingsForm(_settings);
+        _settingsForm.FormClosed += (_, _) => _settingsForm = null;
+        _settingsForm.Show();
     }
 
     private void OpenLog()

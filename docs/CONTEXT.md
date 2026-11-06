@@ -100,6 +100,25 @@ A small dedicated touchscreen next to the PC that:
 - Deck: while `status == "ready"` and `inCall`, the Volume tab shows a 176 px **Discord sidebar** on the right (Discord icon from its audio session, "In call", channel name without emoji — no emoji font on the Pi) with big **Mute** and **Deafen** buttons (warm red with a crossed-out mic/headphones when active). The mixer gets the remaining width and scrolls.
 - Verified on the device: authorized once, sidebar appears in a voice call, Mute/Deafen toggle Discord and follow changes made in Discord.
 
+### Polarity (`pc-companion/Polarity/`, `pi-deck/deck/ui/polarity.py`)
+- Polarity is a separate app (Tauri, plays through a bundled mpv). It's an **add-on on the deck's side only**: nothing in Polarity's repository is changed or depends on the deck.
+- **Running:** a process named `Polarity` or `polar` (the dev build) exists, checked every 2 s.
+- **Now playing:** on Windows Polarity's mpv is its own process with a JSON IPC pipe, `\\.\pipe\polar-mpv-<polarity pid>` (Polarity's `src-tauri/src/player/ipc.rs`). It appears on the first playback and closes after a few idle minutes. mpv serves each client on its own pipe instance, so `MpvClient` connects **as a second client** and observes `pause`, `time-pos`, `duration`, `idle-active` and `media-title`. It only ever sends `cycle pause`; Polarity observes the same properties, so its player bar follows, and an outside pause sticks.
+  - **No skip buttons:** seeks sent from outside (relative, absolute+keyframes, absolute+exact) are undone by Polarity within ~0.3 s. mpv jumps back to where Polarity's own player is, although the stream is seekable and cached. Polarity's own ±10 works. Reading Polarity's code didn't show which part does it (not auto-skip, not the watch-party follower, not resume), so the deck has play/pause only (Nov 2026).
+- **Title, episode and poster** come from Polarity's data file `%APPDATA%\app.getpolar.desktop\polarity.json`: the active space's newest progress entry whose duration matches mpv's (±5 s). Polarity saves it every 5 s while playing. Without one, mpv's `media-title` is used.
+- **Nothing playing:** Continue Watching is built like Polarity's: started (> 30 s), under the watched threshold (`settings.watchedThreshold`), one per title, newest first, 20 max. Below it, the library, newest first, 30 max. Read-only: a `FileSystemWatcher` reloads it (300 ms debounce, retried if caught mid-write).
+- **Privacy:** only names, episode labels, poster/backdrop links and progress are read. Settings, add-ons, keys and each progress entry's `stream` (it can carry tokens) are never read into anything sent. Posters are fetched by the PC (http/https only, 2 at a time, at most 80), scaled to 200×300 JPEG, and sent as images by hash, never as links. The log never names titles or links.
+- **Display only:** tapping a poster does nothing. Polarity has no way for another program to start a title, and next episode is Polarity's own logic.
+- **Deck:** the tab sits between Spotify and Lights and appears only while `running`. With four tabs they're 112 px wide. If it disappears while open, the deck falls back to Spotify.
+  - **Playing:** laid out **exactly like the Spotify tab**, so switching between them doesn't shift anything. The 200×300 poster is centred in Spotify's 300×300 art slot. The title column, the 32 px title and the 22 px episode (in the artist's place) match, as do the progress bar at +150 px (interpolated, redrawn once a second) and the play/pause button at Spotify's play position.
+  - **Otherwise:** "Continue watching" (120×180 posters with a progress strip and titles) and "Library" (80×120), each row scrolling on its own (`Tab.on_scroll_begin` tells the tab which row).
+
+### Deck settings (`pc-companion/Tray/SettingsForm.cs`, `DeckSettings.cs`)
+- **Window:** tray menu → "Deck settings…" opens a small window. "Show on the deck" has checkboxes for the Spotify tab, the Polarity tab, the Lights tab and light button, the Discord sidebar, the shut-down button and the audio output switcher. The Volume tab is always there. Changes apply straight away; there's no OK step.
+- **Storage and sending:** saved in `%LOCALAPPDATA%\PiMediaDeck\deck-settings.json` and sent as `deck.settings` on connect and on every change. The deck keeps the last settings while the PC is away and treats unknown parts as on (`Store.shows`).
+- **On the deck:** hidden tabs leave the bar (`Tab.visible()`). If the open tab disappears, it falls back to Spotify, else Volume. Hidden buttons aren't drawn, and an open output menu or shut-down dialog closes. With the switcher off, the pill only shows the connection state.
+- **Polarity hidden:** the PC app sends `polarity.state` as not running, so no titles or posters leave the PC at all.
+
 ### Lights (IKEA DIRIGERA, `pi-deck/deck/lights.py`)
 - The house's IKEA lights (Zigbee) are on an **IKEA DIRIGERA hub** (shared with the household; also in Apple Home as a bridge). The deck talks to the hub **directly over the LAN** — no PC involvement, so the Lights tab works while the PC is off.
 - Pairing: `python3 ~/pi-deck/scripts/dirigera_pair.py <hub-ip>`, then press the hub's action button. Writes `~/.config/pi-deck/dirigera.json` (mode 600: host, token, hub certificate SHA-256). The token is never printed. The hub's certificate is self-signed, so its fingerprint is **pinned** and checked on every connection before the token is sent.
@@ -158,6 +177,14 @@ Every message: `{ "type": "<name>", ...payload }`. Version 1.
 { "type": "audio.icon", "hash": "cd34…", "mime": "image/png", "data": "<base64>" }
 { "type": "discord.state", "status": "ready", "inCall": true, "channel": "General",
   "muted": false, "deafened": false }   // status: not_running | needs_setup | authorizing | denied | ready
+{ "type": "polarity.state", "running": true,                    // Polarity open on the PC (else everything empty)
+  "playing": { "title": "…", "subtitle": "S1 E2 · …", "posterHash": "ef56…", "durationMs": 1440000,
+               "positionMs": 312000, "positionUpdatedAt": 1730000000000, "isPlaying": true },   // or null
+  "continue": [ { "id": "tt0000000", "title": "…", "subtitle": null, "posterHash": "…", "progress": 0.42 } ],
+  "library":  [ { "id": "tt0000000", "title": "…", "subtitle": null, "posterHash": "…", "progress": null } ] }
+{ "type": "polarity.art", "hash": "ef56…", "mime": "image/jpeg", "data": "<base64>" }   // a poster, before the state that uses it
+{ "type": "deck.settings", "show": { "spotify": true, "polarity": true, "lights": true,   // right after hello, and on every change
+                                     "discord": true, "power": true, "outputs": true } }
 { "type": "pong" }
 ```
 
@@ -170,6 +197,7 @@ Every message: `{ "type": "<name>", ...payload }`. Version 1.
 { "type": "audio.set_output", "id": "{0.0.0.00000000}.{…}" }   // make it the Windows default (all roles)
 { "type": "discord.command", "action": "toggle_mute" }          // toggle_mute | toggle_deafen (PC flips the current state)
 { "type": "pc.power", "action": "shutdown" }                    // only after the deck's confirmation dialog
+{ "type": "polarity.command", "action": "play_pause" }          // only play_pause (Polarity undoes outside seeks)
 { "type": "ping" }
 ```
 

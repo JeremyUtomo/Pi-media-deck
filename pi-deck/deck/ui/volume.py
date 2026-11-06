@@ -136,7 +136,7 @@ class VolumeTab(Tab):
         self._area = full = area
         sidebar: pygame.Rect | None = None
         discord = self._store.discord or {}
-        if discord.get("status") == "ready" and discord.get("inCall"):
+        if discord.get("status") == "ready" and discord.get("inCall") and self._store.shows("discord"):
             # In a Discord call: a sidebar with mute/deafen on the right; the mixer gets the rest (and scrolls).
             sidebar = pygame.Rect(area.right - 16 - SIDEBAR_WIDTH, area.top + 8, SIDEBAR_WIDTH, area.height - 16)
             area = pygame.Rect(area.left, area.top, sidebar.left - 8 - area.left, area.height)
