@@ -16,6 +16,20 @@ public sealed class DeckHub
 {
     private const int MaxIncomingMessageBytes = 64 * 1024;
 
+    // Commands run one at a time on their own worker, never in a receive loop: a Core Audio call can hang for
+    // minutes (seen with the Windows audio service restarting), and a blocked receive loop stops answering the
+    // deck's pings, so the deck drops the connection and the command is lost. A command that waited this long is
+    // skipped instead of run late (otherwise a hang ends with a burst of stale output switches).
+    private static readonly TimeSpan CommandMaxAge = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan SlowCommand = TimeSpan.FromSeconds(3);
+
+    private readonly Channel<(DeckClient Client, string Text, long Queued)> _commands =
+        Channel.CreateBounded<(DeckClient, string, long)>(new BoundedChannelOptions(128)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+        });
+
     private readonly MediaService _media;
     private readonly AudioService _audio;
     private readonly DiscordService _discord;
@@ -52,7 +66,40 @@ public sealed class DeckHub
             foreach (var client in _clients.Keys)
                 SendAudio(client, state);
         };
+
+        _ = Task.Run(RunCommandsAsync);
     }
+
+    private async Task RunCommandsAsync()
+    {
+        await foreach (var (client, text, queued) in _commands.Reader.ReadAllAsync())
+        {
+            var waited = Stopwatch.GetElapsedTime(queued);
+            if (waited > CommandMaxAge)
+            {
+                _log.LogWarning("Skipped a command from {Remote} that waited {Seconds:0} s: {Command}", client.Remote, waited.TotalSeconds, Summarize(text));
+                continue;
+            }
+
+            var started = Stopwatch.GetTimestamp();
+            using var slow = new System.Threading.Timer(_ => _log.LogWarning("Command from {Remote} still running after {Seconds:0} s: {Command}",
+                client.Remote, SlowCommand.TotalSeconds, Summarize(text)), null, SlowCommand, Timeout.InfiniteTimeSpan);
+            try
+            {
+                await HandleMessageAsync(client, text);
+            }
+            catch (Exception ex)
+            {
+                // E.g. COMException "The RPC server is unavailable" while the Windows audio service restarts.
+                _log.LogError(ex, "Command from {Remote} failed: {Command}", client.Remote, Summarize(text));
+            }
+            var took = Stopwatch.GetElapsedTime(started);
+            if (took > SlowCommand)
+                _log.LogWarning("Command from {Remote} took {Seconds:0.0} s: {Command}", client.Remote, took.TotalSeconds, Summarize(text));
+        }
+    }
+
+    private static string Summarize(string text) => text.Length <= 120 ? text : text[..120] + "…";
 
     public int ClientCount => _clients.Count;
 
@@ -141,8 +188,27 @@ public sealed class DeckHub
                 continue;
 
             if (result.MessageType == WebSocketMessageType.Text)
-                await HandleMessageAsync(client, Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length));
+            {
+                var text = Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length);
+                if (text.Contains("\"ping\"") && IsPing(text))
+                    client.Send(Protocol.Pong());  // answered right here, so it works even while a command hangs
+                else
+                    _commands.Writer.TryWrite((client, text, Stopwatch.GetTimestamp()));
+            }
             message.SetLength(0);
+        }
+    }
+
+    private static bool IsPing(string text)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            return doc.RootElement.TryGetProperty("type", out var type) && type.GetString() == "ping";
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 

@@ -202,12 +202,11 @@ public sealed class AudioService : IDisposable
     /// <summary>Makes an active playback device the Windows default (all roles). Returns false for an unknown id.</summary>
     public bool SetOutput(string id)
     {
-        lock (_sync)
-        {
-            if (Current.Outputs.All(o => o.Id != id))
-                return false;
-            PolicyConfig.SetDefaultOutput(id);
-        }
+        if (Current.Outputs.All(o => o.Id != id))
+            return false;
+        // Not under _sync: it doesn't touch our device objects, and if the audio service stalls it shouldn't
+        // also hold up the poll and volume commands.
+        PolicyConfig.SetDefaultOutput(id);
         Refresh();
         return true;
     }
