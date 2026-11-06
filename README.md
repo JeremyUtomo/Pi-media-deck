@@ -29,6 +29,7 @@ Then use the tray menu's "Allow through firewall…".
 
 Pi (Raspberry Pi OS with desktop, HyperPixel overlay `dtoverlay=vc4-kms-dpi-hyperpixel4`):
 ```bash
+sudo apt install fonts-nanum   # Korean titles (the default fonts have no Hangul)
 cd ~/pi-deck && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 mkdir -p ~/.config/pi-deck && cp config.example.toml ~/.config/pi-deck/config.toml   # set the PC's IP
 sudo bash scripts/install-touch.sh

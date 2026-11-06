@@ -61,6 +61,14 @@ class ThemeTests(unittest.TestCase):
         latin = self.fonts.render("— Kingo Hamada", 18, (255, 255, 255))
         self.assertGreater(image.get_width(), latin.get_width())
 
+    def test_korean_gets_a_font_that_has_it(self) -> None:
+        # Like "추리소설 (Detective Soseol)": Droid Sans Fallback (the Pi's CJK font) has no Hangul at all, so
+        # without a Korean font (fonts-nanum on the Pi) these render as empty boxes.
+        for bold in (False, True):
+            path = self.fonts.runs("추리소설", bold=bold)[0][0]
+            self.assertIsNotNone(path)
+            self.assertTrue(ord("추") in theme._codepoints(path), f"{path.name} has no Hangul (bold={bold})")
+
     def test_mixed_text_ellipsizes_to_width(self) -> None:
         image = self.fonts.render("한국 노래 — Kingo Hamada and a very long featured artist list", 18, (0, 0, 0), max_width=200)
         self.assertLessEqual(image.get_width(), 200)

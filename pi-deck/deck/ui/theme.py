@@ -38,17 +38,21 @@ RADIUS_ART = 20
 
 FONT_DIR = Path(__file__).resolve().parent.parent.parent / "fonts"
 
-# Per style, fonts are tried in order until one has every glyph of the string: Fredoka (bundled, Latin only),
-# then a system sans for symbols (DejaVu on the Pi, Segoe UI on Windows), then a CJK font for Hangul/kanji.
+# Per character, the first font in the chain that has it is used: Fredoka (bundled, Latin only), a system sans
+# for symbols (DejaVu on the Pi, Segoe UI on Windows), a Korean font (Nanum Gothic on the Pi: `apt install
+# fonts-nanum`; Malgun Gothic on Windows), then a CJK font for kanji/kana as the last resort. Droid Sans
+# Fallback has no Hangul at all, so without Nanum Korean titles render as empty boxes on the Pi.
 _FONT_FILES = {
     "regular": [
         [FONT_DIR / "Fredoka-Medium.ttf"],
         ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "C:/Windows/Fonts/segoeui.ttf"],
+        ["/usr/share/fonts/truetype/nanum/NanumGothic.ttf", "C:/Windows/Fonts/malgun.ttf"],
         ["/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf", "C:/Windows/Fonts/malgun.ttf"],
     ],
     "bold": [
         [FONT_DIR / "Fredoka-SemiBold.ttf"],
         ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "C:/Windows/Fonts/segoeuib.ttf"],
+        ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "C:/Windows/Fonts/malgunbd.ttf"],
         ["/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf", "C:/Windows/Fonts/malgunbd.ttf"],
     ],
 }
@@ -60,7 +64,10 @@ class Fonts:
 
     def __init__(self) -> None:
         self._chains = {
-            style: [path for candidates in chain if (path := next((p for p in map(Path, candidates) if p.exists()), None))]
+            # dict.fromkeys: drop duplicates (on Windows, Malgun Gothic is both the Korean font and the last resort)
+            style: list(dict.fromkeys(
+                path for candidates in chain if (path := next((p for p in map(Path, candidates) if p.exists()), None))
+            ))
             for style, chain in _FONT_FILES.items()
         }
         self._fonts: dict[tuple[Path | None, int], pygame.font.Font] = {}

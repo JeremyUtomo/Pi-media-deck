@@ -51,6 +51,7 @@ Pi UI on the PC (dev) and tests (from `pi-deck/`, using the repo-root `.venv` wi
 ```
 First-time setup on the Pi:
 ```bash
+sudo apt install fonts-nanum   # Hangul: the Pi's default fonts have none (Korean titles were empty boxes)
 cd ~/pi-deck && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
