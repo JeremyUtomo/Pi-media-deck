@@ -11,6 +11,17 @@ if (Get-ScheduledTask -TaskName 'PiMediaDeck' -ErrorAction SilentlyContinue) { S
 Get-Process pc-companion -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 
+# A copy stuck in an audio driver call can linger as a zombie that still holds its files, so the publish can't
+# overwrite them. Such files can still be renamed: move them aside, and clear ones left by earlier installs.
+Get-ChildItem $target -Filter '*.locked-*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+$stamp = Get-Date -Format 'yyyyMMddHHmmss'
+foreach ($file in 'pc-companion.exe', 'pc-companion.dll') {
+	$path = Join-Path $target $file
+	if (-not (Test-Path $path)) { continue }
+	try { [System.IO.File]::Open($path, 'Open', 'ReadWrite', 'None').Dispose() }
+	catch { Rename-Item $path "$file.locked-$stamp" -ErrorAction SilentlyContinue }
+}
+
 dotnet publish (Join-Path $PSScriptRoot '..\PcCompanion.csproj') -c Release -o $target --nologo -v q
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
 

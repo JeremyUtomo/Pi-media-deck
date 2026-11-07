@@ -48,6 +48,7 @@ internal static class Program
             MessageBox.Show($"Could not listen on port {Port}:\n{ex.Message}", "Pi Media Deck", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
+        audio.Log = message => app.Logger.LogWarning("{Message}", message);
         audio.Start();
         var discord = app.Services.GetRequiredService<DiscordService>();
         discord.Start();
