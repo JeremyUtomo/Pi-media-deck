@@ -5,7 +5,7 @@
 # one is reachable.
 endpoints = [
     "ws://usb:8765",
-    "ws://192.168.1.20:8765",  # the PC's LAN IP (wired); add its Wi-Fi IP as another fallback if it has one
+    "ws://lan:8765",  # the PC wherever it is on this network: found by scanning, so a new DHCP address is fine
 ]
 
 fullscreen = true

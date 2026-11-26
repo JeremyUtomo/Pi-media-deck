@@ -30,6 +30,8 @@ OPEN_TIMEOUT_S = 3.0
 USB_HOST = "usb"  # endpoint host meaning "the PC on the USB link" (see resolve())
 USB_IFACE = "usb0"
 MAX_USB_PROBES = 30
+LAN_HOST = "lan"  # endpoint host meaning "the PC somewhere on the Pi's own network" (see resolve())
+MAX_LAN_PROBES = 1022  # a /22 at most; a home /24 is 253 probes, all at once (~0.6 s)
 PROBE_TIMEOUT_S = 0.6
 PREFERRED_CHECK_S = 15.0  # while on a fallback endpoint, how often to look for a preferred one
 SIOCGIFADDR = 0x8915
@@ -170,11 +172,17 @@ class NetClient:
         self._wake()
 
 
-# --- USB link ------------------------------------------------------------------------------------------------
+# --- Finding the PC -------------------------------------------------------------------------------------------
 #
 # With `rpi-usb-gadget on` the Pi is a USB network device: usb0 gets 10.12.194.1/28 and NetworkManager's
 # dnsmasq hands the PC an address in that /28 by DHCP. The PC's address can change, so the endpoint
 # "ws://usb:<port>" means "whichever host on usb0's subnet answers on <port>", found by probing them all at once.
+#
+# "ws://lan:<port>" does the same on the Pi's own network (the interface of its default route, normally wlan0).
+# The router can hand the PC a new address at any time (it did in Nov 2026, and the deck lost it),
+# so a fixed IP in the config goes stale. The last address that answered is tried first, so usually nothing is scanned.
+
+_last_found: dict[str, str] = {}  # "usb"/"lan" -> the last address that answered
 
 
 def _iface_network(name: str) -> ipaddress.IPv4Interface | None:
@@ -205,16 +213,45 @@ async def reachable(url: str) -> bool:
     return True
 
 
+def _default_iface() -> str | None:
+    """The interface of the default route (Linux only), e.g. "wlan0"."""
+    if sys.platform != "linux":
+        return None
+    try:
+        for line in Path("/proc/net/route").read_text().splitlines()[1:]:
+            fields = line.split()
+            if len(fields) > 2 and fields[1] == "00000000":
+                return fields[0]
+    except OSError:
+        pass
+    return None
+
+
 async def resolve(url: str) -> str | None:
-    """The URL to connect to: unchanged, or for host "usb" the PC found on the USB link (None if not found)."""
+    """The URL to connect to: unchanged, or for host "usb"/"lan" the PC found on that network (None if not found)."""
     parts = urllib.parse.urlsplit(url)
-    if parts.hostname != USB_HOST:
+    host = parts.hostname
+    if host == USB_HOST:
+        network, limit = _iface_network(USB_IFACE), MAX_USB_PROBES
+    elif host == LAN_HOST:
+        iface = _default_iface()
+        network, limit = (_iface_network(iface) if iface else None), MAX_LAN_PROBES
+    else:
         return url
-    network = _iface_network(USB_IFACE)
     if network is None:
         return None
-    candidates = [str(host) for host in network.network.hosts() if host != network.ip][:MAX_USB_PROBES]
     port = parts.port or 80
-    results = await asyncio.gather(*(reachable(f"ws://{host}:{port}") for host in candidates))
-    found = next((host for host, ok in zip(candidates, results) if ok), None)
-    return parts._replace(netloc=f"{found}:{port}").geturl() if found else None
+
+    remembered = _last_found.get(host)
+    if remembered is not None and ipaddress.ip_address(remembered) in network.network             and await reachable(f"ws://{remembered}:{port}"):
+        return parts._replace(netloc=f"{remembered}:{port}").geturl()
+
+    candidates = [str(h) for h in network.network.hosts() if h != network.ip][:limit]
+    results = await asyncio.gather(*(reachable(f"ws://{h}:{port}") for h in candidates))
+    found = next((h for h, ok in zip(candidates, results) if ok), None)
+    if found is None:
+        return None
+    if found != remembered:
+        log.info("found the PC at %s (%s network)", found, host)
+    _last_found[host] = found
+    return parts._replace(netloc=f"{found}:{port}").geturl()
